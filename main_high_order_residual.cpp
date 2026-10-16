@@ -49,6 +49,7 @@ static dcl::BalanceMode parse_balance_mode(const std::string& mode, const std::s
     if (mode == "dynamic" && strategy == "threshold") return dcl::BalanceMode::dynamic_threshold;
     if (mode == "static" && strategy == "profiled") return dcl::BalanceMode::static_profiled;
     if (mode == "dynamic" && strategy == "profiled") return dcl::BalanceMode::dynamic_profiled;
+    if (mode == "hierarchical" || strategy == "hierarchical") return dcl::BalanceMode::hierarchical;
     throw std::runtime_error("Invalid balance mode/strategy");
 }
 
@@ -92,7 +93,7 @@ static void print_partitions(const std::vector<dcl::DevicePartition>& parts) {
     std::cout << std::flush;
 }
 
-int main(int argc, char** argv) {
+static int run_harmony(int argc, char** argv) {
     try {
         using clock_t = std::chrono::steady_clock;
 
@@ -212,4 +213,21 @@ int main(int argc, char** argv) {
         std::cerr << "std error: " << e.what() << std::endl;
         return 2;
     }
+}
+
+int main(int argc, char** argv) {
+    int provided = MPI_THREAD_SINGLE;
+    const int init_status = MPI_Init_thread(&argc, &argv, MPI_THREAD_SERIALIZED, &provided);
+    if (init_status != MPI_SUCCESS) {
+        std::cerr << "MPI_Init_thread failed: " << init_status << '\n';
+        return 3;
+    }
+
+    const int run_status = run_harmony(argc, argv);
+    const int finalize_status = MPI_Finalize();
+    if (finalize_status != MPI_SUCCESS) {
+        std::cerr << "MPI_Finalize failed: " << finalize_status << '\n';
+        return 3;
+    }
+    return run_status;
 }

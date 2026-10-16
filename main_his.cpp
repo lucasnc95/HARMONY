@@ -368,7 +368,8 @@ static dcl::BalanceMode parse_balance_mode(const std::string& schedule, const st
     if (schedule == "dynamic" && strategy == "threshold") return dcl::BalanceMode::dynamic_threshold;
     if (schedule == "static" && strategy == "profiled") return dcl::BalanceMode::static_profiled;
     if (schedule == "dynamic" && strategy == "profiled") return dcl::BalanceMode::dynamic_profiled;
-    throw std::runtime_error("Invalid balance configuration. Use --balance-mode off|static|dynamic and --balance-strategy threshold|profiled");
+    if (schedule == "hierarchical" || strategy == "hierarchical") return dcl::BalanceMode::hierarchical;
+    throw std::runtime_error("Invalid balance configuration. Use --balance-mode off|static|dynamic|hierarchical and --balance-strategy threshold|profiled|hierarchical");
 }
 
 static std::size_t checked_mul_size_t(std::size_t a, std::size_t b, const char* what) {

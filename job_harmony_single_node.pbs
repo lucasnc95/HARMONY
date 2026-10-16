@@ -1,0 +1,30 @@
+#!/bin/bash
+#PBS -N harmony_single_node
+#PBS -j oe
+#PBS -l walltime=00:30:00
+#PBS -l select=1:ncpus=4:mpiprocs=1:mem=8gb:ngpus=1:host=compute-0-7
+
+set -euo pipefail
+: "${PBS_O_WORKDIR:?PBS_O_WORKDIR is required}"
+: "${HARMONY_SINGLE_NODE_RUN_DIR:?Queue with benchmarks/queue_single_node.py}"
+: "${HARMONY_SINGLE_NODE_EXPECTED_HOST:?Expected host is required}"
+cd "$PBS_O_WORKDIR"
+on_exit() {
+    status=$?
+    trap - EXIT
+    status_path="$HARMONY_SINGLE_NODE_RUN_DIR/pbs.status"
+    if ! ( set -C; printf 'pbs_job_id=%s\nscript_exit_code=%s\n' \
+                   "${PBS_JOBID:-unknown}" "$status" > "$status_path" ); then
+        echo "Could not preserve PBS script status at $status_path" >&2
+        exit 1
+    fi
+    exit "$status"
+}
+trap on_exit EXIT
+module load gnu13/13.2.0
+module load openmpi5/5.0.5
+module load prun/2.2
+python3 benchmarks/run_single_node.py \
+    --run-dir "$HARMONY_SINGLE_NODE_RUN_DIR" \
+    --expected-host "$HARMONY_SINGLE_NODE_EXPECTED_HOST" \
+    --bin-dir "$PBS_O_WORKDIR/build/cluster"

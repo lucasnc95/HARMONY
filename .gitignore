@@ -1,4 +1,42 @@
-job_dcl.out
+# ─── Compiled binaries ────────────────────────────────────────────────────────
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.exe
+
+# ─── Build artefacts ──────────────────────────────────────────────────────────
+build/
+Results/
+__pycache__/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+Makefile
+*.cmake
+
+# ─── Profiling / timing outputs ───────────────────────────────────────────────
+# NOTA HISTÓRICA: Arquivos binários e de dados gerados (*.out, Results/, etc)
+# que eram rastreados anteriormente foram removidos e adicionados ao .gitignore no commit b3206cd.
+# Para resgatar métricas e dados de execuções passadas, faça o checkout desse commit.
+profiling_results.txt
+profiling.out
+HIS.out
 gmon.out
 gabarito.out
+job_dcl.out
 teste_250.out
+job_mpiocl.out
+
+# ─── Editor & OS noise ────────────────────────────────────────────────────────
+.agents/
+ORIGINAL_REQUEST.md
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace

@@ -12,6 +12,12 @@
 #include <variant>
 #include <vector>
 #include <type_traits>
+#ifndef OMPI_SKIP_MPICXX
+#define OMPI_SKIP_MPICXX 1
+#endif
+#ifndef MPICH_SKIP_MPICXX
+#define MPICH_SKIP_MPICXX 1
+#endif
 #include <mpi.h>
 
 namespace dcl {
@@ -55,7 +61,7 @@ struct ScalarArg {
     ScalarArg() = default;
 
     template <typename T, typename = std::enable_if_t<std::is_trivially_copyable_v<T>>>
-    ScalarArg(const T& value) : bytes(sizeof(T)) {
+    explicit ScalarArg(const T& value) : bytes(sizeof(T)) {
         std::memcpy(bytes.data(), &value, sizeof(T));
     }
 };
@@ -74,6 +80,12 @@ struct DeviceInfo {
     std::string name;
     DeviceKind kind{DeviceKind::all};
     unsigned int compute_units{0};
+    std::string platform_name;
+    std::string platform_version;
+    std::string device_version;
+    std::string driver_version;
+    std::string identity_kind{"unavailable"};
+    std::string identity;
 };
 
 struct DevicePartition {
@@ -139,7 +151,8 @@ enum class BalanceMode {
     static_threshold,
     dynamic_threshold,
     static_profiled,
-    dynamic_profiled
+    dynamic_profiled,
+    hierarchical
 };
 
 struct AutoBalancePolicy {
@@ -157,6 +170,41 @@ struct AutoBalancePolicy {
 
     // arquivo com os segmentos lineares do profiling de migração
     std::string profiling_file;
+
+    // R2: Threshold ratio for NUMA migration cost vs expected gain (default 50% = 0.50)
+    double numa_cost_gain_ratio_threshold{0.50};
+
+    // R5 forward-compatible fields
+    bool use_contention_adjustment{false};
+    bool use_power_cap{false};
+    double power_budget_watts{0.0};
+};
+
+// Topology Metrics Data Structure (R1.1)
+struct TopoMetrics {
+    // Per-device PCIe round-trip latency in nanoseconds (ns)
+    std::vector<double> pcie_latency_ns;
+    // Per-device PCIe peak bandwidth in gigabytes per second (GB/s)
+    std::vector<double> pcie_bandwidth_gbps;
+    // Rank-to-rank MPI latency in nanoseconds, indexed by [src_rank * rank_count + dst_rank].
+    std::vector<double> mpi_latency_ns;
+    // Rank-to-rank MPI bandwidth in gigabytes per second with the same indexing.
+    std::vector<double> mpi_bandwidth_gbps;
+    bool synthetic{false};
+
+    // Forward-compatible fields for NUMA-aware load balancing (R2)
+    // Flat N x N matrix of NUMA distances (where N is the number of NUMA nodes), unitless distance metrics
+    std::vector<int> numa_distance;
+    // Mapping from global device index to NUMA node index
+    std::vector<int> device_numa_node;
+
+    // Forward-compatible fields for Resource Contention and Power Consumption (R5)
+    // Per-device memory contention factor in [1.0, inf), where 1.0 = no contention
+    std::vector<double> memory_contention_factor;
+    // Per-device Thermal Design Power in watts (W)
+    std::vector<double> thermal_tdp_watts;
+    // Per-device current measured power draw in watts (W)
+    std::vector<double> current_power_watts;
 };
 
 

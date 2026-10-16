@@ -1,0 +1,52 @@
+#!/bin/bash
+#PBS -N harmony_variability
+#PBS -j oe
+#PBS -l walltime=04:00:00
+#PBS -l select=1:ncpus=4:mpiprocs=1:mem=8gb:ngpus=1:vnode=compute-1-0[0]+1:ncpus=4:mpiprocs=1:mem=8gb:ngpus=1:vnode=compute-1-1[0]
+#PBS -l place=free
+
+set -euo pipefail
+: "${PBS_O_WORKDIR:?PBS_O_WORKDIR is required}"
+cd "$PBS_O_WORKDIR"
+on_exit() {
+    status=$?
+    trap - EXIT
+    if [[ -n "${HARMONY_VARIABILITY_RUN_DIR:-}" ]]; then
+        status_path="${HARMONY_VARIABILITY_RUN_DIR}.pbs.status"
+        if ! ( set -C; printf 'pbs_job_id=%s\nscript_exit_code=%s\n' \
+                   "${PBS_JOBID:-unknown}" "$status" > "$status_path" ); then
+            echo "Could not preserve PBS script status at $status_path" >&2
+            exit 1
+        fi
+    fi
+    exit "$status"
+}
+trap on_exit EXIT
+module load gnu13/13.2.0
+module load openmpi5/5.0.5
+module load prun/2.2
+: "${HARMONY_VARIABILITY_RUN_DIR:?Set a fresh HARMONY_VARIABILITY_RUN_DIR before qsub}"
+mode="${HARMONY_VARIABILITY_MODE:-pilot}"
+runner_args=(--execute --mode "$mode" --run-dir "$HARMONY_VARIABILITY_RUN_DIR"
+    --bin-dir "$PBS_O_WORKDIR/build/cluster"
+    --build-manifest "$PBS_O_WORKDIR/build/cluster/build_manifest.json")
+if [[ "$mode" == aba ]]; then
+    : "${HARMONY_ABA_WORKLOAD:?Set kneighbor or leanmd for an isolated A/B/A run}"
+    runner_args+=(--aba-workload "$HARMONY_ABA_WORKLOAD")
+fi
+if [[ -n "${HARMONY_SAMPLE_TIMEOUT_SECONDS:-}" ]]; then
+    runner_args+=(--sample-timeout-seconds "$HARMONY_SAMPLE_TIMEOUT_SECONDS")
+fi
+python3 benchmarks/run_variability.py "${runner_args[@]}"
+if [[ "$mode" == pilot ]]; then
+    python3 benchmarks/analyze_pilot.py \
+        --run-dir "$HARMONY_VARIABILITY_RUN_DIR" \
+        --output "$HARMONY_VARIABILITY_RUN_DIR/pilot-analysis.md"
+fi
+if [[ "${HARMONY_VARIABILITY_MODE:-pilot}" == full && -n "${HARMONY_DIAGNOSTIC_SAMPLE_ORDINAL:-}" ]]; then
+    python3 benchmarks/capture_diagnostic.py --execute \
+        --run-dir "$HARMONY_VARIABILITY_RUN_DIR" \
+        --sample-ordinal "$HARMONY_DIAGNOSTIC_SAMPLE_ORDINAL" \
+        --sample-timeout-seconds "${HARMONY_SAMPLE_TIMEOUT_SECONDS:-1800}" \
+        --output-dir "$HARMONY_VARIABILITY_RUN_DIR/diagnostic-${HARMONY_DIAGNOSTIC_SAMPLE_ORDINAL}"
+fi

@@ -1,0 +1,120 @@
+{
+  "archive_date": "2026-10-13",
+  "pbs_job_id": "183164.frontend",
+  "pbs_id_source": "hwtopolb_eval.out prun hostfile path",
+  "artifact_count": 28,
+  "artifacts": [
+    {
+      "artifact": "comparison_metadata.json",
+      "sha256": "dcff2b9bb4035310864576c9e7b26e2187388e636509e914af1698d3c900c1db"
+    },
+    {
+      "artifact": "comparison_summary.csv",
+      "sha256": "d561047596ba052c54c83f9f769fd324f835b48b8c22ad05293b7caabcb824c9"
+    },
+    {
+      "artifact": "hwtopolb_eval.out",
+      "sha256": "c8189d8cfc911a583aab500e682c9a85ec236e96174cecaca6103296e022c3f1"
+    },
+    {
+      "artifact": "kneighbor_erad_123.csv",
+      "sha256": "a0050d1b519a62c0983e13156ececb950c1cee9374b3d91fd1d501f2a9a473bc"
+    },
+    {
+      "artifact": "kneighbor_erad_123.log",
+      "sha256": "581ee880302d308631127f79e7412bae3e354eaede0212275eaea07312656fd6"
+    },
+    {
+      "artifact": "kneighbor_erad_42.csv",
+      "sha256": "289f3a9eb320fe8948448f1ca574ec961de87d1f1bd61be864a203401adbd3c3"
+    },
+    {
+      "artifact": "kneighbor_erad_42.log",
+      "sha256": "2700a484153e829c10bd2b5743e2d5a02ce7cb2d3148725c0b8ba8ab7a63e273"
+    },
+    {
+      "artifact": "kneighbor_erad_456.csv",
+      "sha256": "258886e8bddb9a45d4bed7cc5995247bc069c8d6891da0f8636bee0b9a69922d"
+    },
+    {
+      "artifact": "kneighbor_erad_456.log",
+      "sha256": "0b7afbba182c971ce71c27eae22003cc5fca942416b4757113b7870b8029df07"
+    },
+    {
+      "artifact": "kneighbor_hwtopolb_123.csv",
+      "sha256": "2e3b78a5d04e41700b7aaf2f6c2c158b4bda39a8dd6e6a30a90750c3a02ebe05"
+    },
+    {
+      "artifact": "kneighbor_hwtopolb_123.log",
+      "sha256": "e462704937c00ecc0af2274537f098cc5f687fc4b85ff6058546d3b6a847b16b"
+    },
+    {
+      "artifact": "kneighbor_hwtopolb_42.csv",
+      "sha256": "58bafd07e29998cb69cbd1bf792577b0ed923983007450689aa67b8a8406c5fb"
+    },
+    {
+      "artifact": "kneighbor_hwtopolb_42.log",
+      "sha256": "9125713a22008e96154038bef89e56e017dbf3dd5f16524dc323db7e7c4db44d"
+    },
+    {
+      "artifact": "kneighbor_hwtopolb_456.csv",
+      "sha256": "02f74795d65eed2a1ac4b960be4b54bbd39d17ad6fa74b21c51daa746888a445"
+    },
+    {
+      "artifact": "kneighbor_hwtopolb_456.log",
+      "sha256": "8e36af59fff5877ddc7adf39e5dc6d697b7b3fba2cfe24d1e5fc30b5014f9d43"
+    },
+    {
+      "artifact": "leanmd_erad_123.csv",
+      "sha256": "100a6500bcdd88c6e1093bbfc25adc15942cb9e259847c10ea24d1557c219ee7"
+    },
+    {
+      "artifact": "leanmd_erad_123.log",
+      "sha256": "3b233862701ed0ea75696f22c06332091a846ff6ccbb9208d182d9cefb176042"
+    },
+    {
+      "artifact": "leanmd_erad_42.csv",
+      "sha256": "6b553fed5127f4aafc48be050348af949f5eba746e461eb0e91aeeb519419882"
+    },
+    {
+      "artifact": "leanmd_erad_42.log",
+      "sha256": "7950f59d28b925a259fc82fc9f2d272c22ba38c57503476a8436be5fe0852b10"
+    },
+    {
+      "artifact": "leanmd_erad_456.csv",
+      "sha256": "6bcd57aed4774f908e47b958395ee8696006ea87b08605ad924329b367e7e9c9"
+    },
+    {
+      "artifact": "leanmd_erad_456.log",
+      "sha256": "665c25988d76435bcc5da7c75a0e6c0afa18160e47bfb92d05ae6962894c9380"
+    },
+    {
+      "artifact": "leanmd_hwtopolb_123.csv",
+      "sha256": "7a9527313a724d6aec3b1420a15b575a650df7e69697902abc4f63cd3214e8b7"
+    },
+    {
+      "artifact": "leanmd_hwtopolb_123.log",
+      "sha256": "774fd717e354b4d65b5d28e961576f90ac25911c481ffb5f96034bed22ca61d8"
+    },
+    {
+      "artifact": "leanmd_hwtopolb_42.csv",
+      "sha256": "aac6aae64a0a9177805201b1b0434d4ffce12f81824da32b611efaa51e57a47a"
+    },
+    {
+      "artifact": "leanmd_hwtopolb_42.log",
+      "sha256": "29f84790af458613598a0932a8eab0cded6062cdd97d459655fd4c8a6fac5087"
+    },
+    {
+      "artifact": "leanmd_hwtopolb_456.csv",
+      "sha256": "ae29f2632e328e74ca4c2de6f6aae6171b16d3eafb6640cfd61799728bea54cd"
+    },
+    {
+      "artifact": "leanmd_hwtopolb_456.log",
+      "sha256": "fda23e910c7370cb108d23fe954d2b0f29048db9fb0594056d060e5f16b5bc33"
+    },
+    {
+      "artifact": "topo_metrics_cluster.json",
+      "sha256": "12deb8a56c0bd0f0f2b6b905aa17c30d1526c7b7b77fddfe5d7b75222b53eee7"
+    }
+  ]
+}

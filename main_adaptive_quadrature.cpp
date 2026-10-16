@@ -48,6 +48,7 @@ static dcl::BalanceMode parse_balance_mode(const std::string& mode, const std::s
     if (mode == "dynamic" && strategy == "threshold") return dcl::BalanceMode::dynamic_threshold;
     if (mode == "static" && strategy == "profiled") return dcl::BalanceMode::static_profiled;
     if (mode == "dynamic" && strategy == "profiled") return dcl::BalanceMode::dynamic_profiled;
+    if (mode == "hierarchical" || strategy == "hierarchical") return dcl::BalanceMode::hierarchical;
     throw std::runtime_error("Invalid balance mode/strategy");
 }
 
