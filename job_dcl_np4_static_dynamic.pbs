@@ -1,0 +1,183 @@
+#!/bin/bash
+#----------------------------------------------------------
+# Job name
+#PBS -N DCL_NP4
+
+# Name of stdout output file
+#PBS -o Results/job_dcl_np4.out
+
+# Total number of nodes and MPI tasks/node requested
+#PBS -l nodes=compute-3-3:ppn=16+compute-3-4:ppn=16+compute-3-6:ppn=16+compute-3-7:ppn=16
+
+#PBS -l walltime=14:30:00
+#----------------------------------------------------------
+
+cd $PBS_O_WORKDIR
+
+mkdir -p Results
+mkdir -p Results/np4
+mkdir -p Results/np4/profiled
+mkdir -p Results/np4/threshold
+mkdir -p Results/np4/summary
+mkdir -p Results/np4/profiling
+
+cat $PBS_NODEFILE
+sort $PBS_NODEFILE | uniq > machines2
+cat machines2
+
+export LD_LIBRARY_PATH=/share/apps/AMDAPPSDK-3.0/lib/x86_64/:$LD_LIBRARY_PATH
+
+MPIEXEC=/opt/ohpc/pub/mpi/mpich-ofi-gnu13-ohpc/3.4.3/bin/mpiexec
+NP=4
+
+X=50
+Y=50
+Z=6400
+
+PROFILE_FILE="Results/np${NP}/profiling/profiling_np${NP}.txt"
+RESULT_FILE="Results/np${NP}/summary/resultados_np${NP}.txt"
+TMP_SUMMARY="Results/np${NP}/summary/tabela_resumo_np${NP}_temp.txt"
+
+THRESHOLDS="0.00015625 0.0003125 0.00046875"
+SCHEDULES="static dynamic"
+
+echo "Running profiling for NP=${NP}"
+$MPIEXEC -np $NP -machinefile machines2 ./profiling.out $PROFILE_FILE
+
+echo "Tabela de resultados:" > $RESULT_FILE
+echo "NP | Schedule | Strategy | Iterations | Interval | Threshold | Media Desvio Padrao (s)" >> $RESULT_FILE
+echo "" >> $RESULT_FILE
+echo "---" >> $RESULT_FILE
+echo "" >> $RESULT_FILE
+
+> $TMP_SUMMARY
+
+calcular_estatisticas_arquivo() {
+    awk '{
+        sum += $1
+        sumsq += $1 * $1
+        n += 1
+    } END {
+        if (n > 0) {
+            mean = sum / n
+            variance = (sumsq / n) - (mean * mean)
+            if (variance < 0) variance = 0
+            stddev = sqrt(variance)
+            printf "%.4f %.4f", mean, stddev
+        }
+    }' "$1"
+}
+
+intervals_for_iterations() {
+    if [ "$1" -eq 10000 ]; then
+        echo "100 1000"
+    elif [ "$1" -eq 100000 ]; then
+        echo "1000 10000"
+    else
+        echo "1000"
+    fi
+}
+
+for iter in 10000 100000; do
+    INTERVALS=$(intervals_for_iterations $iter)
+
+    for interval in $INTERVALS; do
+        echo "==================================================" >> $RESULT_FILE
+        echo "NP=$NP | iterations=$iter | rebalance_interval=$interval" >> $RESULT_FILE
+        echo "Mesh: ${X}x${Y}x${Z}" >> $RESULT_FILE
+        echo "==================================================" >> $RESULT_FILE
+
+        for schedule in $SCHEDULES; do
+            # --------------------------------------------------------------
+            # Profiled
+            # --------------------------------------------------------------
+            echo "" >> $RESULT_FILE
+            echo "[$schedule][profiled]" >> $RESULT_FILE
+
+            TIMING_DIR="Results/np${NP}/profiled/${schedule}/iter${iter}/interval${interval}"
+            mkdir -p $TIMING_DIR
+            TIMING_FILE="${TIMING_DIR}/timings.tsv"
+            LOG_DIR="${TIMING_DIR}/logs"
+            mkdir -p $LOG_DIR
+            > $TIMING_FILE
+
+            for run in {1..10}; do
+                RUN_LOG="${LOG_DIR}/run_${run}.out"
+
+                $MPIEXEC -np $NP -machinefile machines2 \
+                ./HIS.out \
+                --x $X --y $Y --z $Z \
+                --iterations $iter \
+                --gather-final 0 \
+                --balance-mode $schedule \
+                --balance-strategy profiled \
+                --rebalance-interval $interval \
+                --profiling-file $PROFILE_FILE \
+                --timing-file $TIMING_FILE \
+                > $RUN_LOG 2>&1
+
+                elapsed=$(tail -n 1 $TIMING_FILE | awk '{print $1}')
+                echo "    t$run: ${elapsed}s" >> $RESULT_FILE
+            done
+
+            stats=$(calcular_estatisticas_arquivo $TIMING_FILE)
+            media=$(echo $stats | awk '{print $1}')
+            desvio=$(echo $stats | awk '{print $2}')
+
+            echo "    Media e desvio padrao: ${media}s +/- ${desvio}s" >> $RESULT_FILE
+            echo "$NP | $schedule | profiled | $iter | $interval | - | ${media}s +/- ${desvio}s" >> $TMP_SUMMARY
+
+            # --------------------------------------------------------------
+            # Thresholds
+            # --------------------------------------------------------------
+            for threshold in $THRESHOLDS; do
+                echo "" >> $RESULT_FILE
+                echo "[$schedule][threshold=$threshold]" >> $RESULT_FILE
+
+                TIMING_DIR="Results/np${NP}/threshold/${schedule}/iter${iter}/interval${interval}/threshold${threshold}"
+                mkdir -p $TIMING_DIR
+                TIMING_FILE="${TIMING_DIR}/timings.tsv"
+                LOG_DIR="${TIMING_DIR}/logs"
+                mkdir -p $LOG_DIR
+                > $TIMING_FILE
+
+                for run in {1..10}; do
+                    RUN_LOG="${LOG_DIR}/run_${run}.out"
+
+                    $MPIEXEC -np $NP -machinefile machines2 \
+                    ./HIS.out \
+                    --x $X --y $Y --z $Z \
+                    --iterations $iter \
+                    --gather-final 0 \
+                    --balance-mode $schedule \
+                    --balance-strategy threshold \
+                    --rebalance-interval $interval \
+                    --rebalance-threshold $threshold \
+                    --profiling-file $PROFILE_FILE \
+                    --timing-file $TIMING_FILE \
+                    > $RUN_LOG 2>&1
+
+                    elapsed=$(tail -n 1 $TIMING_FILE | awk '{print $1}')
+                    echo "    t$run: ${elapsed}s" >> $RESULT_FILE
+                done
+
+                stats=$(calcular_estatisticas_arquivo $TIMING_FILE)
+                media=$(echo $stats | awk '{print $1}')
+                desvio=$(echo $stats | awk '{print $2}')
+
+                echo "    Media e desvio padrao: ${media}s +/- ${desvio}s" >> $RESULT_FILE
+                echo "$NP | $schedule | threshold | $iter | $interval | $threshold | ${media}s +/- ${desvio}s" >> $TMP_SUMMARY
+            done
+        done
+
+        echo "" >> $RESULT_FILE
+    done
+done
+
+echo "" >> $RESULT_FILE
+echo "---" >> $RESULT_FILE
+echo "Tabela Resumo:" >> $RESULT_FILE
+echo "NP | Schedule | Strategy | Iterations | Interval | Threshold | Media Desvio Padrao (s)" >> $RESULT_FILE
+cat $TMP_SUMMARY >> $RESULT_FILE
+
+rm -f $TMP_SUMMARY

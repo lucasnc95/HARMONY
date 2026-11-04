@@ -218,7 +218,7 @@ int main(int argc, char** argv) {
         const std::string timing_file = parse_string_arg(argv + 1, argv + argc, "--timing-file", "");
         const bool gather_final = parse_int_arg(argv + 1, argv + argc, "--gather-final", 1) != 0;
         const dcl::BalanceMode balance_mode = parse_balance_mode(balance_mode_str, balance_strategy_str);
-        (void)gather_final; // gather is intentionally disabled for benchmark runs.
+        gather_final = true; // gather is intentionally disabled for benchmark runs.
 
         if (x <= 0 || y <= 0 || z <= 0) {
             throw std::runtime_error("Mesh dimensions must be positive");
@@ -366,6 +366,10 @@ int main(int argc, char** argv) {
             .tag_field(state_b, dcl::StepFieldRole::rebalance_source)
             .synchronize_at_end(false)
             .build();
+        
+        if (runtime.rank() == 0) {
+        std::cout<<"X = "<<x<<" Y = "<<y<<" Z = "<<z<<" Iterations = "<<iterations<<std::endl;
+        }
 
         auto start = clock_t::now();
 
@@ -390,7 +394,7 @@ int main(int argc, char** argv) {
             );
        
      
-       
+        
 
         if (runtime.rank() == 0) {
             

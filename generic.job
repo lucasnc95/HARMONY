@@ -21,10 +21,9 @@ cat machines2
 
 export LD_LIBRARY_PATH=/share/apps/AMDAPPSDK-3.0/lib/x86_64/:$LD_LIBRARY_PATH
 
-/opt/ohpc/pub/mpi/mpich-ofi-gnu13-ohpc/3.4.3/bin/mpiexec -np 2 -machinefile machines2 ./profiling.out
+mpiexec -np 2 -machinefile machines2 ./profiling.out
 
-/opt/ohpc/pub/mpi/mpich-ofi-gnu13-ohpc/3.4.3/bin/mpiexec -np 2 -machinefile machines2 ./HIS.out \
+mpiexec -np 2 -machinefile machines2 ./HIS.out \
   --x 10 --y 10 --z 10 \
   --iterations 10000 \
-  --rebalance-interval 1000 \
-  --iterations 1 
+  --rebalance-interval 1000

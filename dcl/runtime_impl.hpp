@@ -10,7 +10,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -629,303 +628,167 @@ public:
         reset_balance_window_events();
     }
 
-void execute(const ExecutionStep& step) {
-    if (step.invocations.empty()) return;
+    void execute(const ExecutionStep& step) {
+        if (step.invocations.empty()) return;
+        // execute step profiling window update
+        const bool collect_balance_window = (step.balance.mode != BalanceMode::off);
 
-    const int every = (step.balance.interval <= 0) ? 1 : step.balance.interval;
+        for (std::size_t inv = 0; inv < step.invocations.size(); ++inv) {
+            const KernelInvocation& ki = step.invocations[inv];
 
-    // Coleta eventos se o balanceamento está ativo OU se o usuário configurou
-    // um intervalo. Isso permite imprimir métricas mesmo com balance-mode off.
-    const bool collect_balance_window =
-        (step.balance.mode != BalanceMode::off) || (step.balance.interval > 0);
+            auto kit = kernels_.find(ki.binding.kernel.value);
+            if (kit == kernels_.end()) throw Error("Unknown kernel in execute()");
 
-    for (std::size_t inv = 0; inv < step.invocations.size(); ++inv) {
-        const KernelInvocation& ki = step.invocations[inv];
-
-        auto kit = kernels_.find(ki.binding.kernel.value);
-        if (kit == kernels_.end()) {
-            throw Error("Unknown kernel in execute()");
-        }
-
-        detail::RegisteredKernel& rk = kit->second;
-
-        std::vector<FieldHandle> output_fields =
-            fields_with_role(step, StepFieldRole::write_target);
-
-        if (output_fields.empty()) {
-            output_fields = output_fields_from_binding(ki.binding);
-        }
-
-        if (step.halo.width_elements > 0 && !step.halo.fields.empty()) {
-            std::vector<std::pair<std::size_t, cl_event>> interior_events;
-
-            run_interior_phase(
-                rk,
-                ki,
-                interior_events,
-                step.halo.width_elements
-            );
-
-            if (collect_balance_window) {
-                update_balance_window_events(interior_events, {});
-                append_balance_window_kernel_events(interior_events);
+            detail::RegisteredKernel& rk = kit->second;
+            std::vector<FieldHandle> output_fields =
+                fields_with_role(step, StepFieldRole::write_target);
+            if (output_fields.empty()) {
+                output_fields = output_fields_from_binding(ki.binding);
             }
 
-            record_field_write_events(output_fields, interior_events);
+            if (step.halo.width_elements > 0 && !step.halo.fields.empty()) {
+                std::vector<std::pair<std::size_t, cl_event>> interior_events;
+                run_interior_phase(rk, ki, interior_events, step.halo.width_elements);
+                if (collect_balance_window) update_balance_window_events(interior_events, {});
+                if (collect_balance_window) append_balance_window_kernel_events(interior_events);
+                record_field_write_events(output_fields, interior_events);
 
-            exchange_halo_set(step.halo);
+                // The halo source is the read buffer in double-buffered steps, so
+                // border kernels can be submitted without a device-wide wait here.
+                exchange_halo_set(step.halo);
 
-            std::vector<std::pair<std::size_t, cl_event>> border_events;
+                std::vector<std::pair<std::size_t, cl_event>> border_events;
+                run_border_phase(rk, ki, border_events, step.halo.width_elements);
+                if (collect_balance_window) update_balance_window_events({}, border_events);
+                if (collect_balance_window) append_balance_window_kernel_events(border_events);
+                record_field_write_events(output_fields, border_events);
 
-            run_border_phase(
-                rk,
-                ki,
-                border_events,
-                step.halo.width_elements
-            );
-
-            if (collect_balance_window) {
-                update_balance_window_events({}, border_events);
-                append_balance_window_kernel_events(border_events);
+                release_kernel_events(interior_events);
+                release_kernel_events(border_events);
+            } else {
+                std::vector<std::pair<std::size_t, cl_event>> full_events;
+                run_full_phase(rk, ki, full_events);
+                if (collect_balance_window) update_balance_window_events(full_events, full_events);
+                if (collect_balance_window) append_balance_window_kernel_events(full_events);
+                record_field_write_events(output_fields, full_events);
+                release_kernel_events(full_events);
             }
 
-            record_field_write_events(output_fields, border_events);
+            extract_rw_fields(step, ki.binding);
+        }
 
-            release_kernel_events(interior_events);
-            release_kernel_events(border_events);
-        } else {
-            std::vector<std::pair<std::size_t, cl_event>> full_events;
+        ++iteration_counter_;
+        if (step.balance.mode != BalanceMode::off) {
+            const int every = (step.balance.interval <= 0) ? 1 : step.balance.interval;
+            const bool interval_hit =
+                (iteration_counter_ % static_cast<std::size_t>(every)) == 0;
 
-            run_full_phase(rk, ki, full_events);
+            std::vector<FieldHandle> rebalance_fields =
+                fields_with_role(step, StepFieldRole::rebalance_source);
 
-            if (collect_balance_window) {
-                update_balance_window_events(full_events, full_events);
-                append_balance_window_kernel_events(full_events);
+            // Fallbacks preserve compatibility with older code that did not use
+            // explicit rebalance_source tags. For swap-buffered steps, prefer
+            // explicit tags because they identify the active buffer(s) only.
+            if (rebalance_fields.empty()) {
+                rebalance_fields = fields_with_role(step, StepFieldRole::read_source);
+            }
+            if (rebalance_fields.empty()) {
+                rebalance_fields = last_input_fields_;
+            }
+            if (rebalance_fields.empty()) {
+                rebalance_fields = last_output_fields_;
             }
 
-            record_field_write_events(output_fields, full_events);
-            release_kernel_events(full_events);
+            rebalance_fields = unique_existing_proportional_fields(rebalance_fields);
+
+            bool should_try = false;
+            if (!rebalance_fields.empty()) {
+                if (step.balance.mode == BalanceMode::dynamic_threshold ||
+                    step.balance.mode == BalanceMode::dynamic_profiled) {
+                    should_try = interval_hit;
+                } else if (step.balance.mode == BalanceMode::static_threshold ||
+                           step.balance.mode == BalanceMode::static_profiled) {
+                    bool& attempted = static_balance_attempted_[step.name];
+                    if (!attempted && interval_hit) {
+                        should_try = true;
+                        attempted = true;
+                    }
+                }
+            }
+
+            if (should_try && !rebalance_fields.empty()) {
+                if (step.balance.mode == BalanceMode::dynamic_threshold ||
+                    step.balance.mode == BalanceMode::static_threshold) {
+                    this->maybe_rebalance_from_timings(rebalance_fields, step.balance.threshold);
+                } else if (step.balance.mode == BalanceMode::dynamic_profiled ||
+                           step.balance.mode == BalanceMode::static_profiled) {
+                    this->maybe_rebalance_profiled(rebalance_fields, step.balance, step.balance.interval);
+                }
+            }
         }
-
-        last_input_fields_.clear();
-        last_output_fields_.clear();
-
-        extract_rw_fields(step, ki.binding);
-    }
-
-    ++iteration_counter_;
-
-    const int first_every = first_rebalance_interval_from_env(every);
-    bool interval_hit = false;
-
-    if (first_every > 0 && iteration_counter_ < static_cast<std::size_t>(first_every)) {
-        interval_hit = false;
-    } else if (first_every > 0 && iteration_counter_ == static_cast<std::size_t>(first_every)) {
-        interval_hit = true;
-    } else {
-        const std::size_t base = (first_every > 0) ? static_cast<std::size_t>(first_every) : 0u;
-        const std::size_t delta = iteration_counter_ - base;
-        interval_hit = (delta % static_cast<std::size_t>(every)) == 0;
-    }
-
-    if (!interval_hit) {
-        if (step.synchronize_at_end) {
-            synchronize_all_local_devices(false);
-        }
-        return;
-    }
-
-    // Pega TODOS os campos marcados como rebalance_source.
-    std::vector<FieldHandle> rebalance_fields =
-        fields_with_role(step, StepFieldRole::rebalance_source);
-
-    // Fallback seguro para códigos antigos.
-    if (rebalance_fields.empty()) {
-        rebalance_fields = fields_with_role(step, StepFieldRole::read_source);
-    }
-
-    if (rebalance_fields.empty()) {
-        rebalance_fields = last_input_fields_;
-    }
-
-    if (rebalance_fields.empty()) {
-        rebalance_fields = last_output_fields_;
-    }
-
-    rebalance_fields = unique_existing_proportional_fields(rebalance_fields);
-
-    if (step.balance.mode == BalanceMode::off) {
-        const std::vector<double> global_times =
-            collect_global_balance_times_from_window();
-
-        print_balance_interval_metrics(
-            "off",
-            "skip",
-            "balance disabled",
-            global_times,
-            current_loads_,
-            std::vector<float>(),
-            current_loads_,
-            0.0,
-            true
-        );
 
         if (step.synchronize_at_end) {
             synchronize_all_local_devices(false);
         }
-
-        return;
     }
 
-    bool should_try = false;
-    const char* no_try_reason = "not scheduled";
-
-    if (rebalance_fields.empty()) {
-        should_try = false;
-        no_try_reason = "no proportional rebalance_source field";
-    } else if (step.balance.mode == BalanceMode::dynamic_threshold ||
-               step.balance.mode == BalanceMode::dynamic_profiled) {
-        should_try = true;
-        no_try_reason = "dynamic interval hit";
-    } else if (step.balance.mode == BalanceMode::static_threshold ||
-               step.balance.mode == BalanceMode::static_profiled) {
-        bool& attempted = static_balance_attempted_[step.name];
-
-        if (!attempted) {
-            should_try = true;
-            attempted = true;
-            no_try_reason = "static first attempt";
-        } else {
-            should_try = false;
-            no_try_reason = "static balance already attempted";
-        }
-    }
-
-    if (should_try) {
-        if (step.balance.mode == BalanceMode::dynamic_threshold ||
-            step.balance.mode == BalanceMode::static_threshold) {
-            this->maybe_rebalance_from_timings(
-                rebalance_fields,
-                step.balance.threshold
-            );
-        } else if (step.balance.mode == BalanceMode::dynamic_profiled ||
-                   step.balance.mode == BalanceMode::static_profiled) {
-            this->maybe_rebalance_profiled(
-                rebalance_fields,
-                step.balance,
-                step.balance.interval
-            );
-        }
-    } else {
-        const std::vector<double> global_times =
-            collect_global_balance_times_from_window();
-
-        print_balance_interval_metrics(
-            "scheduled",
-            "skip",
-            no_try_reason,
-            global_times,
-            current_loads_,
-            std::vector<float>(),
-            current_loads_,
-            0.0,
-            true
-        );
-    }
-
-    if (step.synchronize_at_end) {
-        synchronize_all_local_devices(false);
-    }
-}
     void rebalance_to(const std::vector<float>& loads) {
-    if (!partition_.has_value()) {
-        throw Error("rebalance_to(): partition must be configured before rebalancing");
-    }
-
-    if (partitions_.empty()) {
-        throw Error("rebalance_to(): no partitions available");
-    }
-
-    if (loads.empty()) {
-        throw Error("rebalance_to(): loads vector is empty");
-    }
-
-    if (loads.size() != partitions_.size()) {
-        throw Error("rebalance_to(): loads size must match number of partitions");
-    }
-
-    // From now on, loads is cumulative: [0.10, 0.20, ..., 1.00].
-    std::vector<float> cumulative = loads;
-
-    float prev = 0.0f;
-    for (std::size_t i = 0; i < cumulative.size(); ++i) {
-        if (!std::isfinite(cumulative[i])) {
-            throw Error("rebalance_to(): non-finite cumulative load");
+        if (!partition_.has_value()) return;
+        if (partitions_.empty()) return;
+        if (loads.size() != partitions_.size()) {
+            throw Error("rebalance_to(): loads size must match number of partitions");
         }
 
-        if (cumulative[i] < 0.0f) {
-            throw Error("rebalance_to(): negative cumulative load not allowed");
+        std::vector<float> cumulative = loads;
+        float prev = 0.0f;
+        for (std::size_t i = 0; i < cumulative.size(); ++i) {
+            if (!std::isfinite(cumulative[i])) {
+                throw Error("rebalance_to(): non-finite cumulative load");
+            }
+            if (cumulative[i] < 0.0f) {
+                throw Error("rebalance_to(): negative cumulative load not allowed");
+            }
+            if (cumulative[i] < prev) cumulative[i] = prev;
+            if (cumulative[i] > 1.0f) cumulative[i] = 1.0f;
+            prev = cumulative[i];
+        }
+        cumulative.back() = 1.0f;
+
+        const std::vector<DevicePartition> old_parts = partitions_;
+        const std::vector<DevicePartition> new_parts = partitions_from_loads(cumulative);
+        if (new_parts.size() != old_parts.size()) {
+            throw Error("rebalance_to(): rounded partition count mismatch");
         }
 
-        if (cumulative[i] < prev) {
-            cumulative[i] = prev;
-        }
-
-        if (cumulative[i] > 1.0f) {
-            cumulative[i] = 1.0f;
-        }
-
-        prev = cumulative[i];
-    }
-
-    cumulative.back() = 1.0f;
-
-    const std::vector<DevicePartition> old_parts = partitions_;
-    const std::vector<DevicePartition> new_parts =
-        partitions_from_loads(cumulative);
-
-    if (new_parts.size() != old_parts.size()) {
-        throw Error("rebalance_to(): rounded partition count mismatch");
-    }
-
-    bool same = (old_parts.size() == new_parts.size());
-
-    if (same) {
-        for (std::size_t i = 0; i < old_parts.size(); ++i) {
-            if (old_parts[i].global_offset != new_parts[i].global_offset ||
-                old_parts[i].element_count != new_parts[i].element_count ||
-                old_parts[i].owning_rank   != new_parts[i].owning_rank ||
-                old_parts[i].local_index   != new_parts[i].local_index) {
-                same = false;
-                break;
+        bool same = (old_parts.size() == new_parts.size());
+        if (same) {
+            for (std::size_t i = 0; i < old_parts.size(); ++i) {
+                if (old_parts[i].global_offset != new_parts[i].global_offset ||
+                    old_parts[i].element_count != new_parts[i].element_count ||
+                    old_parts[i].owning_rank   != new_parts[i].owning_rank ||
+                    old_parts[i].local_index   != new_parts[i].local_index) {
+                    same = false;
+                    break;
+                }
             }
         }
-    }
+        if (same) {
+            current_loads_ = loads_from_partitions(partitions_);
+            reset_balance_window_events();
+            print_partition_loads(current_loads_);
+            return;
+        }
 
-    if (same) {
+        this->synchronize(true);
+        redistribute_all_registered_fields(old_parts, new_parts);
+        partitions_ = new_parts;
         current_loads_ = loads_from_partitions(partitions_);
+        this->synchronize(true);
         reset_balance_window_events();
-        interval_comm_seconds_local_ = 0.0;
         print_partition_loads(current_loads_);
-        return;
     }
 
-    this->synchronize(true);
-
-    // Manual rebalance: move all proportional fields.
-    // Automatic per-step balancing should use redistribute_selected_registered_fields().
-    redistribute_all_registered_fields(old_parts, new_parts);
-
-    partitions_ = new_parts;
-    current_loads_ = loads_from_partitions(partitions_);
-
-    this->synchronize(true);
-
-    reset_balance_window_events();
-    interval_comm_seconds_local_ = 0.0;
-
-    print_partition_loads(current_loads_);
-}
+    
 
     void gather(FieldHandle field, void* host_dst, std::size_t bytes) {
         auto fit = fields_.find(field.value);
@@ -1191,96 +1054,47 @@ private:
         }
     }
 
-  void mpi_transfer_bytes_chunked(
-    const unsigned char* sendbuf,
-    unsigned char* recvbuf,
-    std::size_t total_bytes,
-    int peer_rank,
-    int tag_base,
-    bool do_send,
-    bool do_recv
-) {
-    if (do_send && sendbuf == nullptr) {
-        throw Error("mpi_transfer_bytes_chunked(): send buffer is null");
-    }
-
-    if (do_recv && recvbuf == nullptr) {
-        throw Error("mpi_transfer_bytes_chunked(): recv buffer is null");
-    }
-
-    check_mpi_tag_base(
-        tag_base,
-        total_bytes,
-        "mpi_transfer_bytes_chunked()"
-    );
-
-    std::size_t offset = 0;
-    int chunk_id = 0;
-
-    while (offset < total_bytes) {
-        const std::size_t remaining = total_bytes - offset;
-
-        const int chunk = static_cast<int>(
-            std::min<std::size_t>(
-                remaining,
-                static_cast<std::size_t>(INT_MAX)
-            )
-        );
-
-        MPI_Request reqs[2];
-        int req_count = 0;
-
-        const double t0 = MPI_Wtime();
-
-        if (do_recv) {
-            detail::check_mpi(
-                MPI_Irecv(
-                    recvbuf + offset,
-                    chunk,
-                    MPI_BYTE,
-                    peer_rank,
-                    tag_base + chunk_id,
-                    comm_,
-                    &reqs[req_count++]
-                ),
-                "MPI_Irecv(chunked transfer)"
-            );
+    void mpi_transfer_bytes_chunked(const unsigned char* sendbuf,
+                                    unsigned char* recvbuf,
+                                    std::size_t total_bytes,
+                                    int peer_rank,
+                                    int tag_base,
+                                    bool do_send,
+                                    bool do_recv) {
+        if (do_send && sendbuf == nullptr) {
+            throw Error("mpi_transfer_bytes_chunked(): send buffer is null");
         }
-
-        if (do_send) {
-            detail::check_mpi(
-                MPI_Isend(
-                    sendbuf + offset,
-                    chunk,
-                    MPI_BYTE,
-                    peer_rank,
-                    tag_base + chunk_id,
-                    comm_,
-                    &reqs[req_count++]
-                ),
-                "MPI_Isend(chunked transfer)"
-            );
+        if (do_recv && recvbuf == nullptr) {
+            throw Error("mpi_transfer_bytes_chunked(): recv buffer is null");
         }
+        check_mpi_tag_base(tag_base, total_bytes, "mpi_transfer_bytes_chunked()");
 
-        if (req_count > 0) {
-            detail::check_mpi(
-                MPI_Waitall(
-                    req_count,
-                    reqs,
-                    MPI_STATUSES_IGNORE
-                ),
-                "MPI_Waitall(chunked transfer)"
-            );
+        std::size_t offset = 0;
+        int chunk_id = 0;
+        while (offset < total_bytes) {
+            const std::size_t remaining = total_bytes - offset;
+            const int chunk = static_cast<int>(std::min<std::size_t>(remaining, static_cast<std::size_t>(INT_MAX)));
+            MPI_Request reqs[2];
+            int req_count = 0;
+            if (do_recv) {
+                detail::check_mpi(
+                    MPI_Irecv(recvbuf + offset, chunk, MPI_BYTE, peer_rank, tag_base + chunk_id, comm_, &reqs[req_count++]),
+                    "MPI_Irecv(chunked transfer)"
+                );
+            }
+            if (do_send) {
+                detail::check_mpi(
+                    MPI_Isend(sendbuf + offset, chunk, MPI_BYTE, peer_rank, tag_base + chunk_id, comm_, &reqs[req_count++]),
+                    "MPI_Isend(chunked transfer)"
+                );
+            }
+            if (req_count > 0) {
+                detail::check_mpi(MPI_Waitall(req_count, reqs, MPI_STATUSES_IGNORE), "MPI_Waitall(chunked transfer)");
+            }
+            offset += static_cast<std::size_t>(chunk);
+            ++chunk_id;
         }
-
-        const double t1 = MPI_Wtime();
-
-        interval_comm_seconds_local_ += (t1 - t0);
-
-        offset += static_cast<std::size_t>(chunk);
-        ++chunk_id;
     }
-}
 
     void update_device_timings(const std::vector<double>& elapsed_local) {
         if (device_timings_.size() != elapsed_local.size()) {
@@ -1346,11 +1160,6 @@ private:
         next_kernel_id_ = 0;
         active_kernel_ = -1;
         iteration_counter_ = 0;
-        interval_comm_seconds_local_ = 0.0;
-        accumulated_compute_seconds_ = 0.0;
-        accumulated_comm_seconds_ = 0.0;
-        accumulated_balance_seconds_ = 0.0;
-        accumulated_rebalance_apply_seconds_ = 0.0;
     }
 
     int owner_rank_of_global_device(int g) const {
@@ -1618,38 +1427,28 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
         return std::nullopt;
     }
 
-void extract_rw_fields(
-    const ExecutionStep& step,
-    const KernelBinding& binding
-) {
-    last_input_fields_.clear();
-    last_output_fields_.clear();
+    void extract_rw_fields(const ExecutionStep& step, const KernelBinding& binding) {
+        last_input_fields_.clear();
+        last_output_fields_.clear();
 
-    for (const StepFieldTag& tag : step.field_tags) {
-        if (tag.role == StepFieldRole::read_source) {
-            last_input_fields_.push_back(tag.field);
-        } else if (tag.role == StepFieldRole::write_target) {
-            last_output_fields_.push_back(tag.field);
+        last_input_fields_ = fields_with_role(step, StepFieldRole::read_source);
+        last_output_fields_ = fields_with_role(step, StepFieldRole::write_target);
+
+        if (!last_input_fields_.empty() || !last_output_fields_.empty()) {
+            return;
         }
-    }
 
-    if (!last_input_fields_.empty() || !last_output_fields_.empty()) {
-        return;
-    }
-
-    for (std::size_t i = 0; i < binding.args.size(); ++i) {
-        const unsigned idx = binding.args[i].first;
-        const KernelArg& arg = binding.args[i].second;
-
-        if (const FieldHandle* fh = std::get_if<FieldHandle>(&arg)) {
-            if (idx == 0) {
-                last_output_fields_.push_back(*fh);
-            } else if (idx == 1) {
-                last_input_fields_.push_back(*fh);
+        // Fallback for old kernels that rely on positional convention:
+        // arg0 = output, arg1 = input.
+        for (std::size_t i = 0; i < binding.args.size(); ++i) {
+            const unsigned idx = binding.args[i].first;
+            const KernelArg& arg = binding.args[i].second;
+            if (const FieldHandle* fh = std::get_if<FieldHandle>(&arg)) {
+                if (idx == 0) last_output_fields_.push_back(*fh);
+                if (idx == 1) last_input_fields_.push_back(*fh);
             }
         }
     }
-}
 
     std::vector<FieldHandle> output_fields_from_binding(const KernelBinding& binding) const {
         std::vector<FieldHandle> out;
@@ -2094,14 +1893,12 @@ void extract_rw_fields(
         }
     }
 
-void exchange_halo_set(const HaloSpec& hs) {
-    if (hs.width_elements == 0) return;
-    if (hs.fields.empty()) return;
-
-    for (std::size_t i = 0; i < hs.fields.size(); ++i) {
-        exchange_halos_for_field(hs.fields[i], hs.width_elements);
+    void exchange_halo_set(const HaloSpec& hs) {
+        if (hs.width_elements == 0) return;
+        for (std::size_t i = 0; i < hs.fields.size(); ++i) {
+            exchange_halos_for_field(hs.fields[i], hs.width_elements);
+        }
     }
-}
 
 inline void exchange_halos_for_field(FieldHandle fh, std::size_t halo) {
     if (halo == 0 || partitions_.size() < 2) {
@@ -2641,44 +2438,28 @@ inline void rebalance(FieldHandle target_field) {
     this->synchronize(true);
 }
 
-static double max_value(const std::vector<double>& values) {
-    double out = 0.0;
-    for (double v : values) {
-        if (v > out) out = v;
+
+
+inline bool maybe_rebalance_from_timings(
+    const std::vector<FieldHandle>& requested_rebalance_fields,
+    float threshold
+) {
+    if (!partition_.has_value()) return false;
+    if (partitions_.empty()) return false;
+
+    const std::vector<FieldHandle> rebalance_fields =
+        unique_existing_proportional_fields(requested_rebalance_fields);
+    if (rebalance_fields.empty()) {
+        reset_balance_window_events();
+        return false;
     }
-    return out;
-}
 
-double mpi_max_double(double local_value, const char* what) const {
-    double global_value = 0.0;
-    detail::check_mpi(
-        MPI_Allreduce(
-            &local_value,
-            &global_value,
-            1,
-            MPI_DOUBLE,
-            MPI_MAX,
-            comm_
-        ),
-        what
-    );
-    return global_value;
-}
-
-inline void reset_interval_comm_stats() {
-    interval_comm_seconds_local_ = 0.0;
-}
-
-std::vector<double> collect_global_balance_times_from_window() {
-    const std::vector<double> measured_elapsed =
-        compute_balance_window_elapsed_local();
+    const std::vector<double> measured_elapsed = compute_balance_window_elapsed_local();
 
     std::vector<double> local_times(partitions_.size(), 0.0);
-
     for (std::size_t i = 0; i < partitions_.size(); ++i) {
         if (partitions_[i].owning_rank == rank_ && partitions_[i].local_index >= 0) {
             const int li = partitions_[i].local_index;
-
             if (li >= 0 && static_cast<std::size_t>(li) < measured_elapsed.size()) {
                 local_times[i] = measured_elapsed[static_cast<std::size_t>(li)];
             }
@@ -2686,398 +2467,36 @@ std::vector<double> collect_global_balance_times_from_window() {
     }
 
     std::vector<double> global_times(partitions_.size(), 0.0);
-
-    if (!global_times.empty()) {
-        detail::check_mpi(
-            MPI_Allreduce(
-                local_times.data(),
-                global_times.data(),
-                static_cast<int>(global_times.size()),
-                MPI_DOUBLE,
-                MPI_SUM,
-                comm_
-            ),
-            "MPI_Allreduce(balance interval global times)"
-        );
-    }
-
-    return global_times;
-}
-
-inline void print_named_loads(
-    const char* title,
-    const std::vector<float>& loads
-) const {
-    if (rank_ != 0) return;
-
-    std::cout << "  " << title << ":\n";
-
-    if (loads.empty()) {
-        std::cout << "    <empty>\n";
-        return;
-    }
-
-    float prev = 0.0f;
-    float total = 0.0f;
-
-    for (std::size_t i = 0; i < loads.size(); ++i) {
-        const float cum = loads[i];
-        const float share = cum - prev;
-
-        prev = cum;
-        total += share;
-
-        std::cout
-            << "    part[" << i << "]"
-            << " cum=" << (100.0f * cum) << "%"
-            << " share=" << (100.0f * share) << "%";
-
-        if (i < partitions_.size()) {
-            const DevicePartition& p = partitions_[i];
-
-            std::cout
-                << " device_global=" << p.device_global_index
-                << " rank=" << p.owning_rank
-                << " local_index=" << p.local_index
-                << " offset=" << p.global_offset
-                << " count=" << p.element_count;
-        }
-
-        std::cout << "\n";
-    }
-
-    std::cout << "    total=" << (100.0f * total) << "%\n";
-}
-
-
-int first_rebalance_interval_from_env(int fallback) const {
-    const char* raw = std::getenv("DCL_FIRST_REBALANCE_INTERVAL");
-    if (raw == nullptr || raw[0] == '\0') return fallback;
-
-    const int value = std::atoi(raw);
-    return (value > 0) ? value : fallback;
-}
-
-std::string metrics_file_from_env() const {
-    const char* raw = std::getenv("DCL_METRICS_FILE");
-    if (raw == nullptr) return std::string();
-    return std::string(raw);
-}
-
-std::string metrics_run_id_from_env() const {
-    const char* raw = std::getenv("DCL_METRICS_RUN_ID");
-    if (raw == nullptr || raw[0] == '\0') return std::string("0");
-    return std::string(raw);
-}
-
-std::string csv_sanitize(const std::string& in) const {
-    std::string out;
-    out.reserve(in.size());
-
-    for (char c : in) {
-        if (c == ',' || c == '\n' || c == '\r' || c == '\t') {
-            out.push_back(';');
-        } else {
-            out.push_back(c);
-        }
-    }
-
-    return out;
-}
-
-std::string format_float_vector_for_csv(const std::vector<float>& values) const {
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(9);
-    for (std::size_t i = 0; i < values.size(); ++i) {
-        if (i != 0) oss << "|";
-        oss << values[i];
-    }
-    return oss.str();
-}
-
-std::string format_double_vector_for_csv(const std::vector<double>& values) const {
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(9);
-    for (std::size_t i = 0; i < values.size(); ++i) {
-        if (i != 0) oss << "|";
-        oss << values[i];
-    }
-    return oss.str();
-}
-
-bool file_is_empty_or_missing(const std::string& path) const {
-    std::ifstream in(path.c_str(), std::ios::binary);
-    if (!in.good()) return true;
-    return in.peek() == std::ifstream::traits_type::eof();
-}
-
-void append_balance_metrics_csv(
-    const char* policy_name,
-    const char* action,
-    const char* reason,
-    const std::vector<double>& global_times,
-    const std::vector<float>& old_loads,
-    const std::vector<float>& proposed_loads,
-    const std::vector<float>& current_loads_after,
-    double T_compute_interval,
-    double T_comm_interval,
-    double T_balance_total,
-    double T_rebalance_apply
-) {
-    if (rank_ != 0) return;
-
-    const std::string path = metrics_file_from_env();
-    if (path.empty()) return;
-
-    const bool need_header = file_is_empty_or_missing(path);
-
-    std::ofstream out(path.c_str(), std::ios::app);
-    if (!out.is_open()) {
-        std::cerr << "[DCL Warning] Could not open metrics file: " << path << "\n";
-        return;
-    }
-
-    if (need_header) {
-        out << "run_id,iteration,policy,action,reason,"
-            << "T_compute_interval_s,T_comm_interval_s,T_balance_total_s,T_rebalance_apply_s,"
-            << "T_compute_accum_s,T_comm_accum_s,T_balance_accum_s,T_rebalance_apply_accum_s,"
-            << "old_loads,proposed_loads,current_loads,device_times\n";
-    }
-
-    out << metrics_run_id_from_env() << ","
-        << iteration_counter_ << ","
-        << csv_sanitize(policy_name ? std::string(policy_name) : std::string()) << ","
-        << csv_sanitize(action ? std::string(action) : std::string()) << ","
-        << csv_sanitize(reason ? std::string(reason) : std::string()) << ","
-        << std::fixed << std::setprecision(9)
-        << T_compute_interval << ","
-        << T_comm_interval << ","
-        << T_balance_total << ","
-        << T_rebalance_apply << ","
-        << accumulated_compute_seconds_ << ","
-        << accumulated_comm_seconds_ << ","
-        << accumulated_balance_seconds_ << ","
-        << accumulated_rebalance_apply_seconds_ << ","
-        << format_float_vector_for_csv(old_loads) << ","
-        << format_float_vector_for_csv(proposed_loads) << ","
-        << format_float_vector_for_csv(current_loads_after) << ","
-        << format_double_vector_for_csv(global_times) << "\n";
-}
-
-void print_balance_interval_metrics(
-    const char* policy_name,
-    const char* action,
-    const char* reason,
-    const std::vector<double>& global_times,
-    const std::vector<float>& old_loads,
-    const std::vector<float>& proposed_loads,
-    const std::vector<float>& current_loads_after,
-    double local_balance_seconds,
-    bool reset_after_print,
-    double local_rebalance_apply_seconds = 0.0
-) {
-    const double T_compute_interval = max_value(global_times);
-
-    const double T_comm_interval =
-        mpi_max_double(
-            interval_comm_seconds_local_,
-            "MPI_Allreduce(balance interval communication time)"
-        );
-
-    const double T_balance_total =
-        mpi_max_double(
-            local_balance_seconds,
-            "MPI_Allreduce(balance total time)"
-        );
-
-    const double T_rebalance_apply =
-        mpi_max_double(
-            local_rebalance_apply_seconds,
-            "MPI_Allreduce(rebalance apply time)"
-        );
-
-    accumulated_compute_seconds_ += T_compute_interval;
-    accumulated_comm_seconds_ += T_comm_interval;
-    accumulated_balance_seconds_ += T_balance_total;
-    accumulated_rebalance_apply_seconds_ += T_rebalance_apply;
-
-    append_balance_metrics_csv(
-        policy_name,
-        action,
-        reason,
-        global_times,
-        old_loads,
-        proposed_loads,
-        current_loads_after,
-        T_compute_interval,
-        T_comm_interval,
-        T_balance_total,
-        T_rebalance_apply
+    detail::check_mpi(
+        MPI_Allreduce(
+            local_times.data(),
+            global_times.data(),
+            static_cast<int>(global_times.size()),
+            MPI_DOUBLE,
+            MPI_SUM,
+            comm_
+        ),
+        "MPI_Allreduce(balance times)"
     );
 
-    if (rank_ == 0) {
-        std::cout << "[DCL][balance-metrics] iteration=" << iteration_counter_ << "\n";
-        std::cout << "  policy=" << policy_name << "\n";
-        std::cout << "  action=" << action << "\n";
-        std::cout << "  reason=" << reason << "\n";
-        std::cout << "  T_compute_interval_s=" << T_compute_interval << "\n";
-        std::cout << "  T_comm_interval_s=" << T_comm_interval << "\n";
-        std::cout << "  T_balance_total_s=" << T_balance_total << "\n";
-        std::cout << "  T_rebalance_apply_s=" << T_rebalance_apply << "\n";
-        std::cout << "  T_compute_accum_s=" << accumulated_compute_seconds_ << "\n";
-        std::cout << "  T_comm_accum_s=" << accumulated_comm_seconds_ << "\n";
-        std::cout << "  T_balance_accum_s=" << accumulated_balance_seconds_ << "\n";
-        std::cout << "  T_rebalance_apply_accum_s=" << accumulated_rebalance_apply_seconds_ << "\n";
-
-        std::cout << "  device_times_s:\n";
-        for (std::size_t i = 0; i < global_times.size(); ++i) {
-            std::cout << "    part[" << i << "]=" << global_times[i] << "\n";
-        }
-    }
-
-    print_named_loads("OLD loads", old_loads);
-
-    if (!proposed_loads.empty()) {
-        print_named_loads("PROPOSED loads", proposed_loads);
-    }
-
-    print_named_loads("CURRENT loads", current_loads_after);
-
-    if (rank_ == 0) {
-        std::cout << std::flush;
-    }
-
-    if (reset_after_print) {
-        reset_interval_comm_stats();
-        reset_balance_window_events();
-    }
-}
-
-inline bool maybe_rebalance_from_timings(
-    const std::vector<FieldHandle>& rebalance_fields,
-    float threshold
-) {
-    const double balance_t0 = MPI_Wtime();
-
-    const std::vector<float> old_loads = current_loads_;
-
-    if (!partition_.has_value()) {
-        const std::vector<double> global_times =
-            collect_global_balance_times_from_window();
-
-        print_balance_interval_metrics(
-            "threshold",
-            "skip",
-            "no partition",
-            global_times,
-            old_loads,
-            std::vector<float>(),
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
-        return false;
-    }
-
-    if (partitions_.empty()) {
-        const std::vector<double> global_times =
-            collect_global_balance_times_from_window();
-
-        print_balance_interval_metrics(
-            "threshold",
-            "skip",
-            "empty partition list",
-            global_times,
-            old_loads,
-            std::vector<float>(),
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
-        return false;
-    }
-
-    const std::vector<FieldHandle> fields_to_move =
-        unique_existing_proportional_fields(rebalance_fields);
-
-    if (fields_to_move.empty()) {
-        const std::vector<double> global_times =
-            collect_global_balance_times_from_window();
-
-        print_balance_interval_metrics(
-            "threshold",
-            "skip",
-            "empty proportional rebalance field list",
-            global_times,
-            old_loads,
-            std::vector<float>(),
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
-        return false;
-    }
-
-    const std::vector<double> global_times =
-        collect_global_balance_times_from_window();
-
     const std::vector<float> proposed_loads =
-        detail::compute_loads_from_partition_throughput(
-            global_times,
-            partitions_
-        );
+        detail::compute_loads_from_partition_throughput(global_times, partitions_);
 
     if (proposed_loads.empty()) {
-        print_balance_interval_metrics(
-            "threshold",
-            "skip",
-            "empty proposed loads",
-            global_times,
-            old_loads,
-            std::vector<float>(),
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
+        reset_balance_window_events();
         return false;
     }
 
     const std::vector<DevicePartition> old_parts = partitions_;
-    const std::vector<DevicePartition> new_parts =
-        partitions_from_loads(proposed_loads);
-
+    const std::vector<DevicePartition> new_parts = partitions_from_loads(proposed_loads);
     if (new_parts.size() != old_parts.size()) {
-        print_balance_interval_metrics(
-            "threshold",
-            "skip",
-            "rounded partition count mismatch",
-            global_times,
-            old_loads,
-            proposed_loads,
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
+        reset_balance_window_events();
         return false;
     }
 
-    const std::vector<float> effective_new_loads =
-        loads_from_partitions(new_parts);
-
-    float diff = std::numeric_limits<float>::infinity();
-
-    if (!current_loads_.empty() &&
-        current_loads_.size() == effective_new_loads.size()) {
-        diff = detail::l2_norm_diff(current_loads_, effective_new_loads);
-    }
+    const std::vector<float> effective_new_loads = loads_from_partitions(new_parts);
 
     bool same = (old_parts.size() == new_parts.size());
-
     if (same) {
         for (std::size_t i = 0; i < old_parts.size(); ++i) {
             if (old_parts[i].global_offset != new_parts[i].global_offset ||
@@ -3092,90 +2511,36 @@ inline bool maybe_rebalance_from_timings(
 
     if (same) {
         current_loads_ = loads_from_partitions(partitions_);
-
-        print_balance_interval_metrics(
-            "threshold",
-            "skip",
-            "new partition identical",
-            global_times,
-            old_loads,
-            effective_new_loads,
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
+        reset_balance_window_events();
         return false;
     }
 
-    if (diff < threshold) {
-        current_loads_ = loads_from_partitions(partitions_);
-
-        std::ostringstream oss;
-        oss
-            << "load difference below fixed threshold; "
-            << "diff=" << diff
-            << ", threshold=" << threshold;
-
-        const std::string reason = oss.str();
-
-        print_balance_interval_metrics(
-            "threshold",
-            "skip",
-            reason.c_str(),
-            global_times,
-            old_loads,
-            effective_new_loads,
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
-        return false;
+    double diff_l2 = std::numeric_limits<double>::infinity();
+    if (!current_loads_.empty() && current_loads_.size() == effective_new_loads.size()) {
+        diff_l2 = 0.0;
+        for (std::size_t i = 0; i < effective_new_loads.size(); ++i) {
+            const double d =
+                static_cast<double>(current_loads_[i]) -
+                static_cast<double>(effective_new_loads[i]);
+            diff_l2 += d * d;
+        }
+        diff_l2 = std::sqrt(diff_l2);
     }
 
-    const double apply_t0 = MPI_Wtime();
+    if (diff_l2 < static_cast<double>(threshold)) {
+        reset_balance_window_events();
+        return false;
+    }
 
     this->synchronize(true);
-
-    this->redistribute_selected_registered_fields(
-        fields_to_move,
-        old_parts,
-        new_parts
-    );
-
+    this->redistribute_selected_registered_fields(rebalance_fields, old_parts, new_parts);
     partitions_ = new_parts;
     current_loads_ = loads_from_partitions(partitions_);
-
     this->synchronize(true);
-
-    const double apply_elapsed = MPI_Wtime() - apply_t0;
-
-    std::ostringstream oss;
-    oss
-        << "accepted by fixed threshold; "
-        << "diff=" << diff
-        << ", threshold=" << threshold;
-
-    const std::string reason = oss.str();
-
-    print_balance_interval_metrics(
-        "threshold",
-        "rebalance",
-        reason.c_str(),
-        global_times,
-        old_loads,
-        effective_new_loads,
-        current_loads_,
-        MPI_Wtime() - balance_t0,
-        true,
-        apply_elapsed
-    );
+    reset_balance_window_events();
 
     return true;
 }
-
-
 
 inline void load_profiling_data(const std::string& profiling_file) {
     int n_points = 0;
@@ -3272,149 +2637,72 @@ double get_migration_overhead(std::size_t volume) const {
 
 
 
-inline bool maybe_rebalance_profiled(
-    const std::vector<FieldHandle>& rebalance_fields,
-    const AutoBalancePolicy& policy,
-    int interval
-) {
-    const double balance_t0 = MPI_Wtime();
+inline bool maybe_rebalance_profiled(const std::vector<FieldHandle>& requested_rebalance_fields, const AutoBalancePolicy& policy, int interval) {
+    if (!partition_.has_value()) return false;
+    if (partitions_.empty()) return false;
+    if (policy.total_iterations <= 0) return false;
 
-    const std::vector<float> old_loads = current_loads_;
-
-    if (!partition_.has_value()) {
-        const std::vector<double> global_times =
-            collect_global_balance_times_from_window();
-
-        print_balance_interval_metrics(
-            "profiled",
-            "skip",
-            "no partition",
-            global_times,
-            old_loads,
-            std::vector<float>(),
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
+    const std::vector<FieldHandle> rebalance_fields =
+        unique_existing_proportional_fields(requested_rebalance_fields);
+    if (rebalance_fields.empty()) {
+        reset_balance_window_events();
         return false;
     }
 
-    if (partitions_.empty()) {
-        const std::vector<double> global_times =
-            collect_global_balance_times_from_window();
-
-        print_balance_interval_metrics(
-            "profiled",
-            "skip",
-            "empty partition list",
-            global_times,
-            old_loads,
-            std::vector<float>(),
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
-        return false;
-    }
-
-    if (policy.total_iterations <= 0) {
-        const std::vector<double> global_times =
-            collect_global_balance_times_from_window();
-
-        print_balance_interval_metrics(
-            "profiled",
-            "skip",
-            "total_iterations not set",
-            global_times,
-            old_loads,
-            std::vector<float>(),
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
-        return false;
-    }
-
-    const std::vector<FieldHandle> fields_to_move =
-        unique_existing_proportional_fields(rebalance_fields);
-
-    if (fields_to_move.empty()) {
-        const std::vector<double> global_times =
-            collect_global_balance_times_from_window();
-
-        print_balance_interval_metrics(
-            "profiled",
-            "skip",
-            "empty proportional rebalance field list",
-            global_times,
-            old_loads,
-            std::vector<float>(),
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
-        return false;
-    }
-
-    if (!profiling_loaded_ ||
-        profiling_file_loaded_ != policy.profiling_file) {
+    if (!profiling_loaded_ || profiling_file_loaded_ != policy.profiling_file) {
         load_profiling_data(policy.profiling_file);
     }
 
-    const std::vector<double> global_times =
-        collect_global_balance_times_from_window();
+    // ---------------------------------------------------------------------
+    // 1. Coleta tempos locais
+    // ---------------------------------------------------------------------
+    const std::vector<double> measured_elapsed = compute_balance_window_elapsed_local();
+
+    std::vector<double> local_times(partitions_.size(), 0.0);
+    for (std::size_t i = 0; i < partitions_.size(); ++i) {
+        if (partitions_[i].owning_rank == rank_ && partitions_[i].local_index >= 0) {
+            const int li = partitions_[i].local_index;
+            if (li >= 0 && static_cast<std::size_t>(li) < measured_elapsed.size()) {
+                local_times[i] = measured_elapsed[static_cast<std::size_t>(li)];
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // 2. Redução global
+    // ---------------------------------------------------------------------
+    std::vector<double> global_times(partitions_.size(), 0.0);
+    detail::check_mpi(
+        MPI_Allreduce(
+            local_times.data(),
+            global_times.data(),
+            static_cast<int>(global_times.size()),
+            MPI_DOUBLE,
+            MPI_SUM,
+            comm_
+        ),
+        "MPI_Allreduce(profiled balance times)"
+    );
 
     const std::vector<float> proposed_loads =
-        detail::compute_loads_from_partition_throughput(
-            global_times,
-            partitions_
-        );
+        detail::compute_loads_from_partition_throughput(global_times, partitions_);
 
-    if (proposed_loads.empty()) {
-        print_balance_interval_metrics(
-            "profiled",
-            "skip",
-            "empty proposed loads",
-            global_times,
-            old_loads,
-            std::vector<float>(),
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
-        return false;
-    }
+    if (proposed_loads.empty()) return false;
 
     const std::vector<DevicePartition> old_parts = partitions_;
-    const std::vector<DevicePartition> new_parts =
-        partitions_from_loads(proposed_loads);
+    const std::vector<DevicePartition> new_parts = partitions_from_loads(proposed_loads);
 
     if (new_parts.size() != old_parts.size()) {
-        print_balance_interval_metrics(
-            "profiled",
-            "skip",
-            "rounded partition count mismatch",
-            global_times,
-            old_loads,
-            proposed_loads,
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
+        reset_balance_window_events();
         return false;
     }
 
-    const std::vector<float> effective_new_loads =
-        loads_from_partitions(new_parts);
+    const std::vector<float> effective_new_loads = loads_from_partitions(new_parts);
 
+    // ---------------------------------------------------------------------
+    // 3. Verifica se mudou algo
+    // ---------------------------------------------------------------------
     bool same = (old_parts.size() == new_parts.size());
-
     if (same) {
         for (std::size_t i = 0; i < old_parts.size(); ++i) {
             if (old_parts[i].global_offset != new_parts[i].global_offset ||
@@ -3429,25 +2717,15 @@ inline bool maybe_rebalance_profiled(
 
     if (same) {
         current_loads_ = loads_from_partitions(partitions_);
-
-        print_balance_interval_metrics(
-            "profiled",
-            "skip",
-            "new partition identical",
-            global_times,
-            old_loads,
-            effective_new_loads,
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
+        reset_balance_window_events();
         return false;
     }
 
+    // ---------------------------------------------------------------------
+    // 4. Estima tempos
+    // ---------------------------------------------------------------------
     double T_comp_int = 0.0;
     double C_total = 0.0;
-
     std::vector<double> capacity(partitions_.size(), 0.0);
 
     for (std::size_t i = 0; i < partitions_.size(); ++i) {
@@ -3455,18 +2733,13 @@ inline bool maybe_rebalance_profiled(
             T_comp_int = global_times[i];
         }
 
-        if (global_times[i] > 1.0e-12 &&
-            partitions_[i].element_count > 0) {
-            capacity[i] =
-                static_cast<double>(partitions_[i].element_count) /
-                global_times[i];
-
+        if (global_times[i] > 1.0e-12 && partitions_[i].element_count > 0) {
+            capacity[i] = static_cast<double>(partitions_[i].element_count) / global_times[i];
             C_total += capacity[i];
         }
     }
 
     double T_comp_bal = T_comp_int;
-
     if (C_total > 0.0) {
         T_comp_bal = 0.0;
 
@@ -3481,8 +2754,7 @@ inline bool maybe_rebalance_profiled(
             }
 
             const double projected =
-                static_cast<double>(new_parts[i].element_count) /
-                capacity[i];
+                static_cast<double>(new_parts[i].element_count) / capacity[i];
 
             if (projected > T_comp_bal) {
                 T_comp_bal = projected;
@@ -3495,49 +2767,44 @@ inline bool maybe_rebalance_profiled(
         T_comp_bal /= static_cast<double>(interval);
     }
 
-    std::vector<std::size_t> rank_recv_bytes(
-        static_cast<std::size_t>(size_),
-        0ull
-    );
+    // ---------------------------------------------------------------------
+    // 5. Estima bytes migrados
+    // ---------------------------------------------------------------------
+    std::vector<std::size_t> rank_recv_bytes(static_cast<std::size_t>(size_), 0ull);
 
     auto count_migration_bytes = [&](FieldHandle fh) {
         auto fit = fields_.find(fh.value);
         if (fit == fields_.end()) return;
 
         const std::size_t elem_bytes =
-            fit->second.spec.units_per_element *
-            fit->second.spec.bytes_per_unit;
+            fit->second.spec.units_per_element * fit->second.spec.bytes_per_unit;
 
         std::size_t src_idx = 0;
         std::size_t dst_idx = 0;
 
-        while (src_idx < old_parts.size() &&
-               dst_idx < new_parts.size()) {
+        // Percorre as partições em tempo linear O(N)
+        while (src_idx < old_parts.size() && dst_idx < new_parts.size()) {
             const auto& src = old_parts[src_idx];
             const auto& dst = new_parts[dst_idx];
 
-            const std::size_t src_end =
-                src.global_offset + src.element_count;
+            const std::size_t src_end = src.global_offset + src.element_count;
+            const std::size_t dst_end = dst.global_offset + dst.element_count;
 
-            const std::size_t dst_end =
-                dst.global_offset + dst.element_count;
+            const std::size_t start = std::max(src.global_offset, dst.global_offset);
+            const std::size_t end = std::min(src_end, dst_end);
 
-            const std::size_t start =
-                std::max(src.global_offset, dst.global_offset);
-
-            const std::size_t end =
-                std::min(src_end, dst_end);
-
+            // Se houver sobreposição espacial
             if (start < end) {
                 const std::size_t len = end - start;
 
+                // Contabiliza rede apenas se a fatia cruzar a fronteira entre ranks
                 if (src.owning_rank != dst.owning_rank) {
-                    rank_recv_bytes[
-                        static_cast<std::size_t>(dst.owning_rank)
-                    ] += len * elem_bytes;
+                    rank_recv_bytes[static_cast<std::size_t>(dst.owning_rank)] +=
+                        len * elem_bytes;
                 }
             }
 
+            // Avança o ponteiro da partição que termina primeiro
             if (src_end < dst_end) {
                 ++src_idx;
             } else if (dst_end < src_end) {
@@ -3549,40 +2816,62 @@ inline bool maybe_rebalance_profiled(
         }
     };
 
-    for (FieldHandle fh : fields_to_move) {
+    for (FieldHandle fh : rebalance_fields) {
         count_migration_bytes(fh);
     }
 
     std::size_t max_v_migrado = 0;
-
     for (std::size_t bytes : rank_recv_bytes) {
         if (bytes > max_v_migrado) {
             max_v_migrado = bytes;
         }
     }
 
-    const double custo_migracao =
-        get_migration_overhead(max_v_migrado);
+    // ---------------------------------------------------------------------
+    // 6. Modelo de custo
+    // ---------------------------------------------------------------------
+    const double custo_migracao = get_migration_overhead(max_v_migrado);
 
     const std::size_t remaining_iterations =
-        (iteration_counter_ <
-         static_cast<std::size_t>(policy.total_iterations))
-            ? (static_cast<std::size_t>(policy.total_iterations) -
-               iteration_counter_)
+        (iteration_counter_ < static_cast<std::size_t>(policy.total_iterations))
+            ? (static_cast<std::size_t>(policy.total_iterations) - iteration_counter_)
             : 0ull;
 
-    const double ganho_por_iter =
-        std::max(0.0, T_comp_int - T_comp_bal);
-
+    const double ganho_por_iter = std::max(0.0, T_comp_int - T_comp_bal);
     const double ganho_total_estimado =
-        ganho_por_iter *
-        static_cast<double>(remaining_iterations);
+        ganho_por_iter * static_cast<double>(remaining_iterations);
 
+    // ---------------------------------------------------------------------
+    // 7. Logs opcionais
+    // ---------------------------------------------------------------------
+    /*
+    if (rank_ == 0) {
+        std::cout
+            << "[DCL][profiled] iteration " << iteration_counter_ << ":\n"
+            << "  remaining_iterations=" << remaining_iterations << "\n"
+            << "  T_comp_int=" << T_comp_int << "\n"
+            << "  T_comp_bal=" << T_comp_bal << "\n"
+            << "  ganho_por_iter=" << ganho_por_iter << "\n"
+            << "  ganho_total=" << ganho_total_estimado << "\n"
+            << "  max_v_migrado=" << max_v_migrado << " bytes\n"
+            << "  custo_migracao=" << custo_migracao << "\n";
+
+        std::cout << "  OLD loads:\n";
+        detail::print_loads_debug(current_loads_);
+
+        std::cout << "  PROPOSED loads:\n";
+        detail::print_loads_debug(proposed_loads);
+
+        std::cout << "  EFFECTIVE loads:\n";
+        detail::print_loads_debug(effective_new_loads);
+    }
+    */
+
+    // ---------------------------------------------------------------------
+    // 8. Decisão
+    // ---------------------------------------------------------------------
     const int local_should_rebalance =
-        (remaining_iterations != 0 &&
-         custo_migracao < ganho_total_estimado)
-            ? 1
-            : 0;
+        (remaining_iterations != 0 && custo_migracao < ganho_total_estimado) ? 1 : 0;
 
     int min_should_rebalance = 0;
     int max_should_rebalance = 0;
@@ -3612,82 +2901,23 @@ inline bool maybe_rebalance_profiled(
     );
 
     if (min_should_rebalance != max_should_rebalance) {
-        throw Error(
-            "maybe_rebalance_profiled(): inconsistent rebalance decision across ranks"
-        );
+        throw Error("maybe_rebalance_profiled(): inconsistent rebalance decision across ranks");
     }
 
     if (local_should_rebalance == 0) {
-        current_loads_ = loads_from_partitions(partitions_);
-
-        std::ostringstream oss;
-        oss
-            << "adaptive decision rejected; "
-            << "remaining_iterations=" << remaining_iterations
-            << ", gain_total=" << ganho_total_estimado
-            << ", migration_cost=" << custo_migracao
-            << ", max_migrated_bytes=" << max_v_migrado
-            << ", T_comp_int_per_iter=" << T_comp_int
-            << ", T_comp_bal_per_iter=" << T_comp_bal;
-
-        const std::string reason = oss.str();
-
-        print_balance_interval_metrics(
-            "profiled",
-            "skip",
-            reason.c_str(),
-            global_times,
-            old_loads,
-            effective_new_loads,
-            current_loads_,
-            MPI_Wtime() - balance_t0,
-            true
-        );
-
+        reset_balance_window_events();
         return false;
     }
 
-    const double apply_t0 = MPI_Wtime();
-
+    // ---------------------------------------------------------------------
+    // 9. Aplica rebalanceamento
+    // ---------------------------------------------------------------------
     this->synchronize(true);
-
-    this->redistribute_selected_registered_fields(
-        fields_to_move,
-        old_parts,
-        new_parts
-    );
-
+    this->redistribute_selected_registered_fields(rebalance_fields, old_parts, new_parts);
     partitions_ = new_parts;
     current_loads_ = loads_from_partitions(partitions_);
-
     this->synchronize(true);
-
-    const double apply_elapsed = MPI_Wtime() - apply_t0;
-
-    std::ostringstream oss;
-    oss
-        << "adaptive decision accepted; "
-        << "remaining_iterations=" << remaining_iterations
-        << ", gain_total=" << ganho_total_estimado
-        << ", migration_cost=" << custo_migracao
-        << ", max_migrated_bytes=" << max_v_migrado
-        << ", T_comp_int_per_iter=" << T_comp_int
-        << ", T_comp_bal_per_iter=" << T_comp_bal;
-
-    const std::string reason = oss.str();
-
-    print_balance_interval_metrics(
-        "profiled",
-        "rebalance",
-        reason.c_str(),
-        global_times,
-        old_loads,
-        effective_new_loads,
-        current_loads_,
-        MPI_Wtime() - balance_t0,
-        true,
-        apply_elapsed
-    );
+    reset_balance_window_events();
 
     return true;
 }
@@ -3913,12 +3143,7 @@ inline void redistribute_selected_registered_fields(
         unique_existing_proportional_fields(selected_fields);
 
     for (FieldHandle fh : fields_to_move) {
-        this->redistribute_field_intersection(
-            fh,
-            old_parts,
-            new_parts
-        );
-
+        this->redistribute_field_intersection(fh, old_parts, new_parts);
         detail::check_mpi(
             MPI_Barrier(comm_),
             "MPI_Barrier(redistribute selected proportional field)"
@@ -3932,39 +3157,40 @@ inline void redistribute_all_registered_fields(
 ) {
     std::vector<int> field_ids;
     field_ids.reserve(fields_.size());
-
-    for (const auto& kv : fields_) {
-        field_ids.push_back(kv.first);
+    for (std::unordered_map<int, detail::RegisteredField>::const_iterator it = fields_.begin();
+         it != fields_.end(); ++it) {
+        field_ids.push_back(it->first);
     }
-
     std::sort(field_ids.begin(), field_ids.end());
 
     for (int field_id : field_ids) {
-        std::unordered_map<int, detail::RegisteredField>::iterator it =
-            fields_.find(field_id);
-
+        std::unordered_map<int, detail::RegisteredField>::iterator it = fields_.find(field_id);
         if (it == fields_.end()) {
             continue;
         }
 
-        if (it->second.spec.redistribution != RedistributionDependency::proportional) {
+        const FieldHandle fh{field_id};
+
+        if (it->second.spec.redistribution == RedistributionDependency::none) {
             continue;
         }
 
-        FieldHandle fh{field_id};
+        if (it->second.spec.redistribution == RedistributionDependency::total) {
+            //this->redistribute_field_total(fh);
+            continue;
+        }
 
-        this->redistribute_field_intersection(
-            fh,
-            old_parts,
-            new_parts
-        );
-
-        detail::check_mpi(
-            MPI_Barrier(comm_),
-            "MPI_Barrier(redistribute proportional field)"
-        );
+        if (it->second.spec.redistribution == RedistributionDependency::proportional) {
+            this->redistribute_field_intersection(fh, old_parts, new_parts);
+            detail::check_mpi(
+                MPI_Barrier(comm_),
+                "MPI_Barrier(redistribute proportional field)"
+            );
+            continue;
+        }
     }
 }
+
 private:
     bool mpi_initialized_by_runtime_{false};
 
@@ -3986,11 +3212,7 @@ private:
 
     std::optional<PartitionSpec> partition_;
     int active_kernel_{-1};
-    double interval_comm_seconds_local_{0.0};
-    double accumulated_compute_seconds_{0.0};
-    double accumulated_comm_seconds_{0.0};
-    double accumulated_balance_seconds_{0.0};
-    double accumulated_rebalance_apply_seconds_{0.0};
+
     int next_field_id_{0};
     int next_kernel_id_{0};
 
