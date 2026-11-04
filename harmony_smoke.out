@@ -1,0 +1,54 @@
+=== Allocated MPI slots ===
+compute-1-0.localdomain
+compute-1-1.localdomain
+=== Toolchain ===
+
+Currently Loaded Modules:
+  1) autotools   3) gnu13/13.2.0   5) ucx/1.18.0         7) openmpi5/5.0.5
+  2) ohpc        4) hwloc/2.12.0   6) libfabric/1.18.0   8) prun/2.2
+
+ 
+
+/opt/ohpc/pub/mpi/openmpi5-gnu13/5.0.5/bin/mpirun
+/opt/ohpc/pub/utils/prun/2.2/prun
+=== Verify OpenCL GPU discovery on both ranks ===
+[prun] Master compute host = compute-1-0
+[prun] Resource manager = openpbs
+[prun] Launch cmd = mpiexec -x LD_LIBRARY_PATH --prefix /opt/ohpc/pub/mpi/openmpi5-gnu13/5.0.5 --hostfile /var/spool/pbs/aux/183163.frontend -- /home/luiz/HARMONY/build/cluster/topo_probe.out --output-json topo_metrics_smoke.json (family=openmpi5)
+# Topology Probe Measurements
+mode=measured
+total_devices=2
+mpi_ranks=2
+pcie_latency_ns[0]=30805.850
+pcie_bandwidth_gbps[0]=10.232
+pcie_latency_ns[1]=30822.100
+pcie_bandwidth_gbps[1]=10.284
+mpi_latency_ns[0][0]=0.000
+mpi_bandwidth_gbps[0][0]=0.000
+mpi_latency_ns[0][1]=5008774.933
+mpi_bandwidth_gbps[0][1]=0.035
+mpi_latency_ns[1][0]=5009357.767
+mpi_bandwidth_gbps[1][0]=0.031
+mpi_latency_ns[1][1]=0.000
+mpi_bandwidth_gbps[1][1]=0.000
+saved_json=topo_metrics_smoke.json
+=== Run the small two-rank main-program smoke test ===
+[prun] Master compute host = compute-1-0
+[prun] Resource manager = openpbs
+[prun] Launch cmd = mpiexec -x LD_LIBRARY_PATH --prefix /opt/ohpc/pub/mpi/openmpi5-gnu13/5.0.5 --hostfile /var/spool/pbs/aux/183163.frontend -- /home/luiz/HARMONY/build/cluster/harmony_smoke.out --x 16 --y 16 --z 32 --iterations 2 --repeat 1 --balance-mode off --gather-final 1 (family=openmpi5)
+=== High-order residual halo kernel, no swap buffers ===
+mesh=16x16x32 total_points=8192 repeat=1 halo_width=1024 elements
+=== Initial partitions ===
+=== Global partitions ===
+part[0] device_global=0 rank=0 local_index=0 offset=0 count=2048
+part[1] device_global=1 rank=0 local_index=1 offset=2048 count=2048
+part[2] device_global=2 rank=1 local_index=-1 offset=4096 count=2048
+part[3] device_global=3 rank=1 local_index=-1 offset=6144 count=2048
+=== Final partitions ===
+=== Global partitions ===
+part[0] device_global=0 rank=0 local_index=0 offset=0 count=2048
+part[1] device_global=1 rank=0 local_index=1 offset=2048 count=2048
+part[2] device_global=2 rank=1 local_index=-1 offset=4096 count=2048
+part[3] device_global=3 rank=1 local_index=-1 offset=6144 count=2048
+Execution time: 0.022396s
+=== Smoke test completed ===

@@ -1,0 +1,5 @@
+benchmark,algo,execution_mode,median_total_wall_s,stddev_total_wall_s,avg_rebalances,seeds
+kneighbor,erad,gpu_opencl,3.73996,0.15011623596400214,9,"42,123,456"
+kneighbor,hwtopolb,gpu_opencl,0.220817,2.079727095323086,9,"42,123,456"
+leanmd,erad,gpu_opencl,4.30019,0.056209698747932885,9,"42,123,456"
+leanmd,hwtopolb,gpu_opencl,0.438039,2.344304997198601,9,"42,123,456"

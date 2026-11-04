@@ -1,0 +1,59 @@
+#!/bin/bash
+#PBS -N harmony_smoke
+#PBS -j oe
+#PBS -o harmony_smoke.out
+#PBS -l walltime=00:20:00
+#PBS -l select=1:ncpus=4:mpiprocs=1:mem=8gb:ngpus=1:vnode=compute-1-0[0]+1:ncpus=4:mpiprocs=1:mem=8gb:ngpus=1:vnode=compute-1-1[0]
+#PBS -l place=free
+
+set -euo pipefail
+
+if [[ -z "${PBS_O_WORKDIR:-}" || -z "${PBS_NODEFILE:-}" ]]; then
+    echo "PBS_O_WORKDIR and PBS_NODEFILE must be set by PBS" >&2
+    exit 1
+fi
+cd "$PBS_O_WORKDIR"
+
+module load gnu13/13.2.0
+module load openmpi5/5.0.5
+module load prun/2.2
+
+echo "=== Allocated MPI slots ==="
+cat "$PBS_NODEFILE"
+if [[ $(wc -l < "$PBS_NODEFILE") -ne 2 ]]; then
+    echo "Expected exactly two PBS MPI slots" >&2
+    exit 1
+fi
+echo "=== Toolchain ==="
+module list 2>&1
+command -v mpirun
+command -v prun
+
+bin_dir="$PBS_O_WORKDIR/build/cluster"
+for binary in topo_probe.out harmony_smoke.out; do
+    if [[ ! -x "$bin_dir/$binary" ]]; then
+        echo "Missing $bin_dir/$binary; run bash cluster_build.sh on the frontend" >&2
+        exit 1
+    fi
+done
+
+echo "=== Verify OpenCL GPU discovery on both ranks ==="
+prun "$bin_dir/topo_probe.out" --output-json topo_metrics_smoke.json
+python3 - topo_metrics_smoke.json <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    metrics = json.load(source)
+if metrics.get("synthetic") or len(metrics["pcie_latency_ns"]) != 2:
+    raise SystemExit("Expected exactly two measured OpenCL GPUs")
+if len(metrics["mpi_latency_ns"]) != 4:
+    raise SystemExit("Expected a two-rank MPI topology matrix")
+PY
+
+echo "=== Run the small two-rank main-program smoke test ==="
+timeout 180s prun "$bin_dir/harmony_smoke.out" \
+    --x 16 --y 16 --z 32 --iterations 2 --repeat 1 \
+    --balance-mode off --gather-final 1
+
+echo "=== Smoke test completed ==="

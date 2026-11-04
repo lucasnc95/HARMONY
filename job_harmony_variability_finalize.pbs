@@ -1,0 +1,14 @@
+#!/bin/bash
+#PBS -N harmony_variance_finalize
+#PBS -j oe
+#PBS -l walltime=00:30:00
+#PBS -l select=1:ncpus=1:mem=2gb
+
+set -euo pipefail
+: "${PBS_O_WORKDIR:?PBS_O_WORKDIR is required}"
+: "${HARMONY_VARIABILITY_EXPERIMENT_ID:?Experiment ID is required}"
+: "${HARMONY_VARIABILITY_RESULTS_ROOT:?Results root is required}"
+cd "$PBS_O_WORKDIR"
+python3 benchmarks/controlled_pbs.py --finalize \
+    --experiment-id "$HARMONY_VARIABILITY_EXPERIMENT_ID" \
+    --results-root "$HARMONY_VARIABILITY_RESULTS_ROOT"

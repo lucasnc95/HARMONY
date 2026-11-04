@@ -1,0 +1,27 @@
+{
+  "commit": null,
+  "working_tree_dirty": null,
+  "hostname": null,
+  "platform": null,
+  "compiler": null,
+  "compiler_flags": "-std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -O3 -DCL_TARGET_OPENCL_VERSION=300",
+  "mpi_launcher": "prun",
+  "global_elements": 1000000,
+  "iterations": 100,
+  "rebalance_interval": 10,
+  "warmup_iterations": 0,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "execution_modes": [
+    "gpu_opencl"
+  ],
+  "recovered_from_existing_logs": true,
+  "binary_sha256": {
+    "kneighbor": "ee5c2f862b0fcd63b3c5bf03efc23205e8f18962f83e17a424055a9733dd65cb",
+    "leanmd": "552d2a8117708aa5b1ca123b600329d06c01594119bb16bf1dfbb1882d4f336e"
+  },
+  "source_sha256": "0bdcb89bb9df8421ca2d334f16376e5d1ab744209c44feb538d6067a160bb66d"
+}

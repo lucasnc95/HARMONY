@@ -71,6 +71,76 @@ void Runtime::synchronize(bool force_finish) {
     impl_->synchronize(force_finish);
 }
 
+void Runtime::set_verbose_metrics(bool enabled) noexcept {
+    impl_->set_verbose_metrics(enabled);
+}
+
+void Runtime::set_topo_metrics(const TopoMetrics& metrics) {
+    impl_->set_topo_metrics(metrics);
+}
+
+const std::optional<TopoMetrics>& Runtime::topo_metrics() const noexcept {
+    return impl_->topo_metrics();
+}
+
+void Runtime::set_simulated_devices_count(int count) noexcept {
+    impl_->set_simulated_devices_count(count);
+}
+
+void Runtime::set_simulated_ranks_for_testing(int ranks) noexcept {
+    impl_->set_simulated_ranks_for_testing(ranks);
+}
+
+void Runtime::set_numa_cost_gain_ratio_threshold(double threshold) noexcept {
+    impl_->set_numa_cost_gain_ratio_threshold(threshold);
+}
+
+double Runtime::numa_cost_gain_ratio_threshold() const noexcept {
+    return impl_->numa_cost_gain_ratio_threshold();
+}
+
+void Runtime::set_simulated_times(const std::vector<double>& times) noexcept {
+    impl_->set_simulated_times(times);
+}
+
+void Runtime::clear_simulated_times() noexcept {
+    impl_->clear_simulated_times();
+}
+
+bool Runtime::maybe_rebalance_from_timings(
+    const std::vector<FieldHandle>& rebalance_fields,
+    float threshold,
+    double numa_cost_gain_ratio_threshold,
+    bool use_contention_adjustment,
+    bool use_power_cap,
+    double power_budget_watts
+) {
+    return impl_->maybe_rebalance_from_timings(
+        rebalance_fields,
+        threshold,
+        numa_cost_gain_ratio_threshold,
+        use_contention_adjustment,
+        use_power_cap,
+        power_budget_watts
+    );
+}
+
+bool Runtime::maybe_rebalance_from_timings(
+    const std::vector<FieldHandle>& rebalance_fields,
+    const AutoBalancePolicy& policy
+) {
+    return impl_->maybe_rebalance_from_timings(
+        rebalance_fields,
+        policy
+    );
+}
+
+bool Runtime::maybe_rebalance_hierarchical(
+    const std::vector<FieldHandle>& rebalance_fields
+) {
+    return impl_->maybe_rebalance_hierarchical(rebalance_fields);
+}
+
 KernelBindingBuilder::KernelBindingBuilder(Runtime& runtime, KernelHandle kernel)
     : runtime_(&runtime) {
     binding_.kernel = kernel;
@@ -128,3 +198,34 @@ ExecutionStep StepBuilder::build() const {
 }
 
 } // namespace dcl
+
+#ifdef __CPPCHECK__
+int main(int argc, char** argv) {
+    dcl::Runtime rt = dcl::Runtime::create(argc, argv);
+    dcl::KernelHandle kh;
+    auto kb = rt.bind(kh);
+    dcl::FieldHandle fh;
+    kb.arg(0, fh);
+    (void)kb.build();
+    auto sb = rt.step("test");
+    dcl::LaunchGeometry geom;
+    sb.invoke(dcl::KernelBinding{}, geom);
+    sb.with_halo_exchange(dcl::HaloSpec{});
+    sb.with_balance(dcl::AutoBalancePolicy{});
+    sb.tag_field(fh, dcl::StepFieldRole::none);
+    sb.synchronize_at_end(true);
+    (void)sb.build();
+    rt.set_numa_cost_gain_ratio_threshold(0.5);
+    (void)rt.numa_cost_gain_ratio_threshold();
+    rt.set_simulated_times({});
+    rt.clear_simulated_times();
+    (void)rt.maybe_rebalance_from_timings({fh}, 0.05f, 0.5);
+    (void)rt.maybe_rebalance_hierarchical({fh});
+    (void)&dcl::load_topo_metrics;
+    (void)&dcl::save_topo_metrics;
+    (void)&dcl::adjusted_capacity;
+    (void)&dcl::apply_power_cap;
+    dcl::Runtime::Impl::cppcheck_anchor_unused();
+    return 0;
+}
+#endif

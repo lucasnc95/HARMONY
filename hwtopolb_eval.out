@@ -1,0 +1,663 @@
+=== Allocated MPI slots ===
+compute-1-0.localdomain
+compute-1-1.localdomain
+=== Toolchain ===
+
+Currently Loaded Modules:
+  1) autotools   3) gnu13/13.2.0   5) ucx/1.18.0         7) openmpi5/5.0.5
+  2) ohpc        4) hwloc/2.12.0   6) libfabric/1.18.0   8) prun/2.2
+
+ 
+
+/opt/ohpc/pub/mpi/openmpi5-gnu13/5.0.5/bin/mpirun
+/opt/ohpc/pub/utils/prun/2.2/prun
+=== Run the five core test suites ===
+[TEST] Running test_accept_correct_dimensions...
+  -> PASS
+[TEST] Running test_reject_wrong_dimensions...
+  -> PASS
+[TEST] Running test_contention_factor_validation...
+  -> PASS
+[TEST] Running test_device_numa_node_validation...
+  -> PASS
+[TEST] Running test_save_load_round_trip...
+  -> PASS
+[TEST] Running test_error_handling...
+  -> PASS
+[TEST] Running test_helpers...
+  -> PASS
+[TEST] Running test_topology_larger_than_local...
+  -> PASS
+
+All test_topo_metrics unit tests PASSED successfully!
+[TEST] Running test_numa_distance_matrix_and_helper...
+  -> PASS
+[TEST] Running test_cross_vs_same_numa_migration_cost...
+  -> PASS
+[TEST] Running test_mpi_network_cost_calculation...
+  -> PASS
+[TEST] Running test_invalid_device_numa_node_throws...
+  -> PASS
+[TEST] Running test_numa_skip_rebalance_when_cost_high...
+[NUMA] migration cost exceeds gain threshold, skipping rebalance
+[DCL][balance-metrics] iteration=0
+  policy=threshold
+  action=skip
+  reason=[NUMA] migration cost exceeds gain threshold
+  T_compute_interval_s=0.0012
+  T_comm_interval_s=0
+  T_balance_total_s=3.1429e-05
+  T_rebalance_apply_s=0
+  T_compute_accum_s=0.0012
+  T_comm_accum_s=0
+  T_balance_accum_s=3.1429e-05
+  T_rebalance_apply_accum_s=0
+  device_times_s:
+    part[0]=0.001
+    part[1]=0.0012
+  OLD loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=50% device_global=1 rank=0 local_index=1 offset=500000 count=500000
+    total=100%
+  PROPOSED loads:
+    part[0] cum=54.5455% share=54.5455% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=45.4545% device_global=1 rank=0 local_index=1 offset=500000 count=500000
+    total=100%
+  CURRENT loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=50% device_global=1 rank=0 local_index=1 offset=500000 count=500000
+    total=100%
+[DCL][balance-metrics] iteration=0
+  policy=threshold
+  action=rebalance
+  reason=accepted by fixed threshold; diff=0.409091, threshold=0.01
+  T_compute_interval_s=0.01
+  T_comm_interval_s=0
+  T_balance_total_s=7.043e-06
+  T_rebalance_apply_s=2.735e-06
+  T_compute_accum_s=0.0112
+  T_comm_accum_s=0
+  T_balance_accum_s=3.8472e-05
+  T_rebalance_apply_accum_s=2.735e-06
+  device_times_s:
+    part[0]=0.001
+    part[1]=0.01
+  OLD loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=909091
+    part[1] cum=100% share=50% device_global=1 rank=0 local_index=1 offset=909091 count=90909
+    total=100%
+  PROPOSED loads:
+    part[0] cum=90.9091% share=90.9091% device_global=0 rank=0 local_index=0 offset=0 count=909091
+    part[1] cum=100% share=9.0909% device_global=1 rank=0 local_index=1 offset=909091 count=90909
+    total=100%
+  CURRENT loads:
+    part[0] cum=90.9091% share=90.9091% device_global=0 rank=0 local_index=0 offset=0 count=909091
+    part[1] cum=100% share=9.0909% device_global=1 rank=0 local_index=1 offset=909091 count=90909
+    total=100%
+  -> PASS
+[TEST] Skipping test_divergent_numa_consensus, needs at least 2 ranks.
+
+All test_numa_cost unit tests PASSED successfully!
+[prun] Master compute host = compute-1-0
+[prun] Resource manager = openpbs
+[prun] Launch cmd = mpiexec -x LD_LIBRARY_PATH --prefix /opt/ohpc/pub/mpi/openmpi5-gnu13/5.0.5 --hostfile /var/spool/pbs/aux/183164.frontend -- /home/luiz/HARMONY/build/cluster/test_numa_cost.out  (family=openmpi5)
+[TEST] Running test_numa_distance_matrix_and_helper...
+  -> PASS
+[TEST] Running test_cross_vs_same_numa_migration_cost...
+  -> PASS
+[TEST] Running test_mpi_network_cost_calculation...
+  -> PASS
+[TEST] Running test_invalid_device_numa_node_throws...
+  -> PASS
+[TEST] Running test_numa_skip_rebalance_when_cost_high...
+[TEST] Running test_numa_distance_matrix_and_helper...
+  -> PASS
+[TEST] Running test_cross_vs_same_numa_migration_cost...
+  -> PASS
+[TEST] Running test_mpi_network_cost_calculation...
+  -> PASS
+[TEST] Running test_invalid_device_numa_node_throws...
+  -> PASS
+[TEST] Running test_numa_skip_rebalance_when_cost_high...
+[NUMA] migration cost exceeds gain threshold, skipping rebalance
+[DCL][balance-metrics] iteration=0
+  policy=threshold
+  action=skip
+  reason=[NUMA] migration cost exceeds gain threshold
+  T_compute_interval_s=0.0012
+  T_comm_interval_s=0
+  T_balance_total_s=0.0107304
+  T_rebalance_apply_s=0
+  T_compute_accum_s=0.0012
+  T_comm_accum_s=0
+  T_balance_accum_s=0.0107304
+  T_rebalance_apply_accum_s=0
+  device_times_s:
+    part[0]=0.001
+    part[1]=0.0012
+  OLD loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=50% device_global=1 rank=1 local_index=-1 offset=500000 count=500000
+    total=100%
+  PROPOSED loads:
+    part[0] cum=54.5455% share=54.5455% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=45.4545% device_global=1 rank=1 local_index=-1 offset=500000 count=500000
+    total=100%
+  CURRENT loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=50% device_global=1 rank=1 local_index=-1 offset=500000 count=500000
+    total=100%
+[DCL][balance-metrics] iteration=0
+  policy=threshold
+  action=rebalance
+  reason=accepted by fixed threshold; diff=0.409091, threshold=0.01
+  T_compute_interval_s=0.01
+  T_comm_interval_s=0
+  T_balance_total_s=0.000590794
+  T_rebalance_apply_s=0.000264637
+  T_compute_accum_s=0.0112
+  T_comm_accum_s=0
+  T_balance_accum_s=0.0113211
+  T_rebalance_apply_accum_s=0.000264637
+  device_times_s:
+    part[0]=0.001
+    part[1]=0.01
+  OLD loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=909091
+    part[1] cum=100% share=50% device_global=1 rank=1 local_index=-1 offset=909091 count=90909
+    total=100%
+  PROPOSED loads:
+    part[0] cum=90.9091% share=90.9091% device_global=0 rank=0 local_index=0 offset=0 count=909091
+    part[1] cum=100% share=9.0909% device_global=1 rank=1 local_index=-1 offset=909091 count=90909
+    total=100%
+  CURRENT loads:
+    part[0] cum=90.9091% share=90.9091% device_global=0 rank=0 local_index=0 offset=0 count=909091
+    part[1] cum=100% share=9.0909% device_global=1 rank=1 local_index=-1 offset=909091 count=90909
+    total=100%
+  -> PASS
+[TEST] Running test_mpi_skip_rebalance_when_cost_high...
+  -> PASS
+[TEST] Running test_mpi_skip_rebalance_when_cost_high...
+[NUMA] migration cost exceeds gain threshold, skipping rebalance
+[DCL][balance-metrics] iteration=0
+  policy=threshold
+  action=skip
+  reason=[NUMA] migration cost exceeds gain threshold
+  T_compute_interval_s=0.01
+  T_comm_interval_s=0
+  T_balance_total_s=0.000352251
+  T_rebalance_apply_s=0
+  T_compute_accum_s=0.0212
+  T_comm_accum_s=0
+  T_balance_accum_s=0.0116734
+  T_rebalance_apply_accum_s=0.000264637
+  device_times_s:
+    part[0]=0.001
+    part[1]=0.01
+  OLD loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=50% device_global=1 rank=1 local_index=-1 offset=500000 count=500000
+    total=100%
+  PROPOSED loads:
+    part[0] cum=90.9091% share=90.9091% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=9.0909% device_global=1 rank=1 local_index=-1 offset=500000 count=500000
+    total=100%
+  CURRENT loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=50% device_global=1 rank=1 local_index=-1 offset=500000 count=500000
+    total=100%
+  -> PASS
+[TEST] Running test_divergent_numa_consensus...
+  -> PASS
+[NUMA] migration cost exceeds gain threshold, skipping rebalance
+[DCL][balance-metrics] iteration=0
+  policy=threshold
+  action=skip
+  reason=[NUMA] migration cost exceeds gain threshold
+  T_compute_interval_s=0.01
+  T_comm_interval_s=0
+  T_balance_total_s=0.000314683
+  T_rebalance_apply_s=0
+  T_compute_accum_s=0.0312
+  T_comm_accum_s=0
+  T_balance_accum_s=0.0119881
+  T_rebalance_apply_accum_s=0.000264637
+  device_times_s:
+    part[0]=0.001
+    part[1]=0.01
+  OLD loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=50% device_global=1 rank=0 local_index=1 offset=500000 count=500000
+    total=100%
+  PROPOSED loads:
+    part[0] cum=90.9091% share=90.9091% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=9.0909% device_global=1 rank=0 local_index=1 offset=500000 count=500000
+    total=100%
+  CURRENT loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=50% device_global=1 rank=0 local_index=1 offset=500000 count=500000
+    total=100%
+  -> PASS
+[DCL][balance-metrics] iteration=0
+  policy=threshold
+  action=skip
+  reason=new partition identical
+  T_compute_interval_s=1
+  T_comm_interval_s=0
+  T_balance_total_s=0.000272634
+  T_rebalance_apply_s=0
+  T_compute_accum_s=1.0312
+  T_comm_accum_s=0
+  T_balance_accum_s=0.0122607
+  T_rebalance_apply_accum_s=0.000264637
+  device_times_s:
+    part[0]=1
+    part[1]=1
+  OLD loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=50% device_global=1 rank=0 local_index=1 offset=500000 count=500000
+    total=100%
+  PROPOSED loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=50% device_global=1 rank=0 local_index=1 offset=500000 count=500000
+    total=100%
+  CURRENT loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=500000
+    part[1] cum=100% share=50% device_global=1 rank=0 local_index=1 offset=500000 count=500000
+    total=100%
+[TEST] Divergent contention proposal reached a common decision: PASS
+[TEST] Divergent balance inputs failed collectively: PASS
+
+All test_numa_cost unit tests PASSED successfully!
+
+All test_numa_cost unit tests PASSED successfully!
+[prun] Master compute host = compute-1-0
+[prun] Resource manager = openpbs
+[prun] Launch cmd = mpiexec -x LD_LIBRARY_PATH --prefix /opt/ohpc/pub/mpi/openmpi5-gnu13/5.0.5 --hostfile /var/spool/pbs/aux/183164.frontend -- /home/luiz/HARMONY/build/cluster/test_hierarchical.out  (family=openmpi5)
+[TEST] Running test_balance_mode_enum_and_policy...
+  -> PASS
+[TEST] Running test_hierarchical_timing_imbalance...
+[HIER] intra-node loads: [1]
+[HIER] inter-node loads: [0.666667, 0.333333]
+[HIER] final partition: [dev 0: offset=0 count=666667, dev 1: offset=666667 count=333333]
+  -> PASS
+[TEST] Running test_hierarchical_reverse_imbalance...
+[HIER] intra-node loads: [1]
+[HIER] inter-node loads: [0.333333, 0.666667]
+[HIER] final partition: [dev 0: offset=0 count=333333, dev 1: offset=333333 count=666667]
+  -> PASS
+[TEST] Running test_hierarchical_equal_times...
+[HIER] intra-node loads: [1]
+[HIER] Inter-node migration aborted due to hysteresis (gain < 5%). projected_time=0.015 global_max_time=0.015
+[HIER] inter-node loads: [0.5, 0.5]
+[HIER] final partition: [dev 0: offset=0 count=500000, dev 1: offset=500000 count=500000]
+  -> PASS
+[TEST] Running test_hierarchical_with_granularity...
+[HIER] intra-node loads: [1]
+[HIER] inter-node loads: [0.666667, 0.333333]
+[HIER] final partition: [dev 0: offset=0 count=667000, dev 1: offset=667000 count=333000]
+  -> PASS
+[TEST] Running test_hierarchical_with_registered_field...
+[HIER] intra-node loads: [1]
+[HIER] inter-node loads: [0.666667, 0.333333]
+[HIER] final partition: [dev 0: offset=0 count=666667, dev 1: offset=666667 count=333333]
+  -> PASS
+[TEST] Running test_hysteresis_prevents_oscillation...
+[HIER] intra-node loads: [1]
+[HIER] Inter-node migration aborted due to hysteresis (gain < 5%). projected_time=0.1 global_max_time=0.1
+[HIER] inter-node loads: [0.5, 0.5]
+[HIER] final partition: [dev 0: offset=0 count=500000, dev 1: offset=500000 count=500000]
+[HIER] intra-node loads: [1]
+[HIER] Inter-node migration aborted due to hysteresis (gain < 5%). projected_time=0.10099 global_max_time=0.102
+[HIER] inter-node loads: [0.5, 0.5]
+[HIER] final partition: [dev 0: offset=0 count=500000, dev 1: offset=500000 count=500000]
+  -> PASS
+[TEST] Running test_c1_no_element_loss_with_more_ranks_than_devices (size=2)...
+[HIER] intra-node loads: [1]
+[HIER] Inter-node migration aborted due to hysteresis (gain < 5%). projected_time=0.01 global_max_time=0.01
+[HIER] inter-node loads: [1, 0]
+[HIER] final partition: [dev 0: offset=0 count=1200000]
+[C1 CHECK] covered=1200000 expected=1200000 OK
+  -> PASS
+[HIER] intra-node loads: [0.666667, 0.333333]
+[HIER] inter-node loads: [0.5, 0.5]
+[HIER] final partition: [dev 0: offset=0 count=333333, dev 1: offset=333333 count=166667, dev 2: offset=500000 count=166667, dev 3: offset=666667 count=333333]
+[TEST] Local rebalance preserves global partition view: PASS
+DCL loads by partition:
+  part[0] device_global=0 rank=0 local_index=0 offset=0 count=1 cum=10% share=10%
+  part[1] device_global=1 rank=0 local_index=1 offset=1 count=1 cum=20% share=10%
+  part[2] device_global=2 rank=1 local_index=-1 offset=2 count=8 cum=100% share=80%
+  total_share=100%
+DCL loads by partition:
+  part[0] device_global=0 rank=0 local_index=0 offset=0 count=0 cum=0% share=0%
+  part[1] device_global=1 rank=0 local_index=1 offset=0 count=0 cum=0% share=0%
+  part[2] device_global=2 rank=1 local_index=-1 offset=0 count=10 cum=100% share=100%
+  total_share=100%
+[TEST] Consecutive micro partitions removed before halo: PASS
+[HIER] intra-node loads: [0.666667, 0.333333]
+[HIER] inter-node loads: [0.75, 0.25]
+[HIER] final partition: [dev 0: offset=0 count=600000, dev 1: offset=600000 count=300000, dev 2: offset=900000 count=200000, dev 3: offset=1100000 count=100000]
+[HIER] intra-node loads: [0.666667, 0.333333]
+[HIER] Inter-node migration aborted due to hysteresis (gain < 5%). projected_time=0.01 global_max_time=0.01
+[HIER] inter-node loads: [0.75, 0.25]
+[HIER] final partition: [dev 0: offset=0 count=600000, dev 1: offset=600000 count=300000, dev 2: offset=900000 count=200000, dev 3: offset=1100000 count=100000]
+[TEST] Constant throughput converges: PASS
+
+All test_hierarchical unit tests PASSED successfully!
+[TEST] Running test_erad_matches_throughput (Test 1)...
+  -> PASS
+[TEST] Running test_hwtopolb_zero_perturbation (Test 2)...
+  -> PASS
+[TEST] Running test_hwtopolb_stochastic_perturbation (Test 3)...
+  Stochastic runs differing from ERAD: 100 / 100
+  -> PASS
+
+All test_algorithms unit tests PASSED successfully!
+[prun] Master compute host = compute-1-0
+[prun] Resource manager = openpbs
+[prun] Launch cmd = mpiexec -x LD_LIBRARY_PATH --prefix /opt/ohpc/pub/mpi/openmpi5-gnu13/5.0.5 --hostfile /var/spool/pbs/aux/183164.frontend -- /home/luiz/HARMONY/build/cluster/test_algorithms.out  (family=openmpi5)
+[TEST] Running test_erad_matches_throughput (Test 1)...
+  -> PASS
+[TEST] Running test_hwtopolb_zero_perturbation (Test 2)...
+  -> PASS
+[TEST] Running test_hwtopolb_stochastic_perturbation (Test 3)...
+  Stochastic runs differing from ERAD: 100 / 100
+  -> PASS
+[TEST] Running test_erad_matches_throughput (Test 1)...
+  -> PASS
+[TEST] Running test_hwtopolb_zero_perturbation (Test 2)...
+  -> PASS
+[TEST] Running test_hwtopolb_stochastic_perturbation (Test 3)...
+  Stochastic runs differing from ERAD: 100 / 100
+  -> PASS
+DCL loads by partition:
+  part[0] device_global=0 rank=0 local_index=0 offset=0 count=70 cum=70% share=70%
+  part[1] device_global=1 rank=1 local_index=-1 offset=70 count=30 cum=100% share=30%
+  total_share=100%
+
+All test_algorithms unit tests PASSED successfully!
+
+All test_algorithms unit tests PASSED successfully!
+[TEST] Running test_adjusted_capacity (R5.2)...
+  -> PASS
+[TEST] Running test_apply_power_cap (R5.3)...
+  -> PASS
+[TEST] Running test_contention_factor_validation (R5.1)...
+  -> PASS
+[TEST] Running test_autobalance_integration (R5.4)...
+[DCL][balance-metrics] iteration=0
+  policy=threshold
+  action=rebalance
+  reason=accepted by fixed threshold; diff=0.3, threshold=0.01
+  T_compute_interval_s=0.01
+  T_comm_interval_s=0
+  T_balance_total_s=6.6264e-05
+  T_rebalance_apply_s=2.785e-06
+  T_compute_accum_s=0.01
+  T_comm_accum_s=0
+  T_balance_accum_s=6.6264e-05
+  T_rebalance_apply_accum_s=2.785e-06
+  device_times_s:
+    part[0]=0.005
+    part[1]=0.01
+  OLD loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=800000
+    part[1] cum=100% share=50% device_global=1 rank=0 local_index=1 offset=800000 count=200000
+    total=100%
+  PROPOSED loads:
+    part[0] cum=80% share=80% device_global=0 rank=0 local_index=0 offset=0 count=800000
+    part[1] cum=100% share=20% device_global=1 rank=0 local_index=1 offset=800000 count=200000
+    total=100%
+  CURRENT loads:
+    part[0] cum=80% share=80% device_global=0 rank=0 local_index=0 offset=0 count=800000
+    part[1] cum=100% share=20% device_global=1 rank=0 local_index=1 offset=800000 count=200000
+    total=100%
+[DCL][balance-metrics] iteration=0
+  policy=threshold
+  action=rebalance
+  reason=accepted by fixed threshold; diff=0.072727, threshold=0.01
+  T_compute_interval_s=0.01
+  T_comm_interval_s=0
+  T_balance_total_s=3.135e-06
+  T_rebalance_apply_s=2.1e-07
+  T_compute_accum_s=0.02
+  T_comm_accum_s=0
+  T_balance_accum_s=6.9399e-05
+  T_rebalance_apply_accum_s=2.995e-06
+  device_times_s:
+    part[0]=0.01
+    part[1]=0.005
+  OLD loads:
+    part[0] cum=80% share=80% device_global=0 rank=0 local_index=0 offset=0 count=727273
+    part[1] cum=100% share=20% device_global=1 rank=0 local_index=1 offset=727273 count=272727
+    total=100%
+  PROPOSED loads:
+    part[0] cum=72.7273% share=72.7273% device_global=0 rank=0 local_index=0 offset=0 count=727273
+    part[1] cum=100% share=27.2727% device_global=1 rank=0 local_index=1 offset=727273 count=272727
+    total=100%
+  CURRENT loads:
+    part[0] cum=72.7273% share=72.7273% device_global=0 rank=0 local_index=0 offset=0 count=727273
+    part[1] cum=100% share=27.2727% device_global=1 rank=0 local_index=1 offset=727273 count=272727
+    total=100%
+[DCL][balance-metrics] iteration=0
+  policy=threshold
+  action=rebalance
+  reason=accepted by fixed threshold; diff=0.066116, threshold=0.01
+  T_compute_interval_s=0.03
+  T_comm_interval_s=0
+  T_balance_total_s=2.284e-06
+  T_rebalance_apply_s=1.51e-07
+  T_compute_accum_s=0.05
+  T_comm_accum_s=0
+  T_balance_accum_s=7.1683e-05
+  T_rebalance_apply_accum_s=3.146e-06
+  device_times_s:
+    part[0]=0.01
+    part[1]=0.03
+  OLD loads:
+    part[0] cum=72.7273% share=72.7273% device_global=0 rank=0 local_index=0 offset=0 count=661157
+    part[1] cum=100% share=27.2727% device_global=1 rank=0 local_index=1 offset=661157 count=338843
+    total=100%
+  PROPOSED loads:
+    part[0] cum=66.1157% share=66.1157% device_global=0 rank=0 local_index=0 offset=0 count=661157
+    part[1] cum=100% share=33.8843% device_global=1 rank=0 local_index=1 offset=661157 count=338843
+    total=100%
+  CURRENT loads:
+    part[0] cum=66.1157% share=66.1157% device_global=0 rank=0 local_index=0 offset=0 count=661157
+    part[1] cum=100% share=33.8843% device_global=1 rank=0 local_index=1 offset=661157 count=338843
+    total=100%
+  -> PASS
+
+All test_contention_power unit tests PASSED successfully!
+[prun] Master compute host = compute-1-0
+[prun] Resource manager = openpbs
+[prun] Launch cmd = mpiexec -x LD_LIBRARY_PATH --prefix /opt/ohpc/pub/mpi/openmpi5-gnu13/5.0.5 --hostfile /var/spool/pbs/aux/183164.frontend -- /home/luiz/HARMONY/build/cluster/test_contention_power.out  (family=openmpi5)
+[TEST] Running test_adjusted_capacity (R5.2)...
+  -> PASS
+[TEST] Running test_apply_power_cap (R5.3)...
+  -> PASS
+[TEST] Running test_contention_factor_validation (R5.1)...
+  -> PASS
+[TEST] Running test_autobalance_integration (R5.4)...
+[TEST] Running test_adjusted_capacity (R5.2)...
+  -> PASS
+[TEST] Running test_apply_power_cap (R5.3)...
+  -> PASS
+[TEST] Running test_contention_factor_validation (R5.1)...
+  -> PASS
+[TEST] Running test_autobalance_integration (R5.4)...
+[DCL][balance-metrics] iteration=0
+  policy=threshold
+  action=rebalance
+  reason=accepted by fixed threshold; diff=0.3, threshold=0.01
+  T_compute_interval_s=0.01
+  T_comm_interval_s=0
+  T_balance_total_s=0.0103317
+  T_rebalance_apply_s=0.000269325
+  T_compute_accum_s=0.01
+  T_comm_accum_s=0
+  T_balance_accum_s=0.0103317
+  T_rebalance_apply_accum_s=0.000269325
+  device_times_s:
+    part[0]=0.005
+    part[1]=0.01
+  OLD loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=800000
+    part[1] cum=100% share=50% device_global=1 rank=1 local_index=-1 offset=800000 count=200000
+    total=100%
+  PROPOSED loads:
+    part[0] cum=80% share=80% device_global=0 rank=0 local_index=0 offset=0 count=800000
+    part[1] cum=100% share=20% device_global=1 rank=1 local_index=-1 offset=800000 count=200000
+    total=100%
+  CURRENT loads:
+    part[0] cum=80% share=80% device_global=0 rank=0 local_index=0 offset=0 count=800000
+    part[1] cum=100% share=20% device_global=1 rank=1 local_index=-1 offset=800000 count=200000
+    total=100%
+[DCL][balance-metrics] iteration=0
+  policy=threshold
+  action=rebalance
+  reason=accepted by fixed threshold; diff=0.072727, threshold=0.01
+  T_compute_interval_s=0.01
+  T_comm_interval_s=0
+  T_balance_total_s=0.000637872
+  T_rebalance_apply_s=0.000260762
+  T_compute_accum_s=0.02
+  T_comm_accum_s=0
+  T_balance_accum_s=0.0109695
+  T_rebalance_apply_accum_s=0.000530087
+  device_times_s:
+    part[0]=0.01
+    part[1]=0.005
+  OLD loads:
+    part[0] cum=80% share=80% device_global=0 rank=0 local_index=0 offset=0 count=727273
+    part[1] cum=100% share=20% device_global=1 rank=1 local_index=-1 offset=727273 count=272727
+    total=100%
+  PROPOSED loads:
+    part[0] cum=72.7273% share=72.7273% device_global=0 rank=0 local_index=0 offset=0 count=727273
+    part[1] cum=100% share=27.2727% device_global=1 rank=1 local_index=-1 offset=727273 count=272727
+    total=100%
+  CURRENT loads:
+    part[0] cum=72.7273% share=72.7273% device_global=0 rank=0 local_index=0 offset=0 count=727273
+    part[1] cum=100% share=27.2727% device_global=1 rank=1 local_index=-1 offset=727273 count=272727
+    total=100%
+[DCL][balance-metrics] iteration=0
+  policy=threshold
+  action=rebalance
+  reason=accepted by fixed threshold; diff=0.066116, threshold=0.01
+  T_compute_interval_s=0.03
+  T_comm_interval_s=0
+  T_balance_total_s=0.000619488
+  T_rebalance_apply_s=0.000259779
+  T_compute_accum_s=0.05
+  T_comm_accum_s=0
+  T_balance_accum_s=0.011589
+  T_rebalance_apply_accum_s=0.000789866
+  device_times_s:
+    part[0]=0.01
+    part[1]=0.03
+  OLD loads:
+    part[0] cum=72.7273% share=72.7273% device_global=0 rank=0 local_index=0 offset=0 count=661157
+    part[1] cum=100% share=27.2727% device_global=1 rank=1 local_index=-1 offset=661157 count=338843
+    total=100%
+  PROPOSED loads:
+    part[0] cum=66.1157% share=66.1157% device_global=0 rank=0 local_index=0 offset=0 count=661157
+    part[1] cum=100% share=33.8843% device_global=1 rank=1 local_index=-1 offset=661157 count=338843
+    total=100%
+  CURRENT loads:
+    part[0] cum=66.1157% share=66.1157% device_global=0 rank=0 local_index=0 offset=0 count=661157
+    part[1] cum=100% share=33.8843% device_global=1 rank=1 local_index=-1 offset=661157 count=338843
+    total=100%
+  -> PASS
+
+All test_contention_power unit tests PASSED successfully!
+  -> PASS
+
+All test_contention_power unit tests PASSED successfully!
+=== Measure GPU and MPI topology ===
+[prun] Master compute host = compute-1-0
+[prun] Resource manager = openpbs
+[prun] Launch cmd = mpiexec -x LD_LIBRARY_PATH --prefix /opt/ohpc/pub/mpi/openmpi5-gnu13/5.0.5 --hostfile /var/spool/pbs/aux/183164.frontend -- /home/luiz/HARMONY/build/cluster/topo_probe.out --output-json topo_metrics_cluster.json (family=openmpi5)
+# Topology Probe Measurements
+mode=measured
+total_devices=2
+mpi_ranks=2
+pcie_latency_ns[0]=42780.250
+pcie_bandwidth_gbps[0]=10.793
+pcie_latency_ns[1]=31074.100
+pcie_bandwidth_gbps[1]=10.372
+mpi_latency_ns[0][0]=0.000
+mpi_bandwidth_gbps[0][0]=0.000
+mpi_latency_ns[0][1]=4998767.433
+mpi_bandwidth_gbps[0][1]=0.028
+mpi_latency_ns[1][0]=4999223.567
+mpi_bandwidth_gbps[1][0]=0.031
+mpi_latency_ns[1][1]=0.000
+mpi_bandwidth_gbps[1][1]=0.000
+saved_json=topo_metrics_cluster.json
+=== Validate the probe/runtime contract and asynchronous halo ===
+[prun] Master compute host = compute-1-0
+[prun] Resource manager = openpbs
+[prun] Launch cmd = mpiexec -x LD_LIBRARY_PATH --prefix /opt/ohpc/pub/mpi/openmpi5-gnu13/5.0.5 --hostfile /var/spool/pbs/aux/183164.frontend -- /home/luiz/HARMONY/build/cluster/test_probe_runtime_integration.out topo_metrics_cluster.json (family=openmpi5)
+Probe JSON loaded with 2 ranks and 2 devices; synthetic=0
+[prun] Master compute host = compute-1-0
+[prun] Resource manager = openpbs
+[prun] Launch cmd = mpiexec -x LD_LIBRARY_PATH --prefix /opt/ohpc/pub/mpi/openmpi5-gnu13/5.0.5 --hostfile /var/spool/pbs/aux/183164.frontend -- /home/luiz/HARMONY/build/cluster/test_async_halo_opencl.out  (family=openmpi5)
+[DCL][balance-metrics] iteration=1
+  policy=off
+  action=skip
+  reason=balance disabled
+  T_compute_interval_s=0
+  T_comm_interval_s=0
+  T_balance_total_s=0
+  T_rebalance_apply_s=0
+  T_compute_accum_s=0
+  T_comm_accum_s=0
+  T_balance_accum_s=0
+  T_rebalance_apply_accum_s=0
+  device_times_s:
+    part[0]=0
+    part[1]=0
+  OLD loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=512
+    part[1] cum=100% share=50% device_global=1 rank=1 local_index=-1 offset=512 count=512
+    total=100%
+  CURRENT loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=512
+    part[1] cum=100% share=50% device_global=1 rank=1 local_index=-1 offset=512 count=512
+    total=100%
+[DCL][balance-metrics] iteration=2
+  policy=off
+  action=skip
+  reason=balance disabled
+  T_compute_interval_s=0
+  T_comm_interval_s=0.00991027
+  T_balance_total_s=0
+  T_rebalance_apply_s=0
+  T_compute_accum_s=0
+  T_comm_accum_s=0.00991027
+  T_balance_accum_s=0
+  T_rebalance_apply_accum_s=0
+  device_times_s:
+    part[0]=0
+    part[1]=0
+  OLD loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=512
+    part[1] cum=100% share=50% device_global=1 rank=1 local_index=-1 offset=512 count=512
+    total=100%
+  CURRENT loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=512
+    part[1] cum=100% share=50% device_global=1 rank=1 local_index=-1 offset=512 count=512
+    total=100%
+PASS: asynchronous OpenCL halo matches two-step CPU reference
+=== Compare ERAD and HWTOPOLB on OpenCL GPUs ===
+Traceback (most recent call last):
+  File "<stdin>", line 49, in <module>
+  File "/usr/lib64/python3.9/subprocess.py", line 424, in check_output
+    return run(*popenargs, stdout=PIPE, timeout=timeout, check=True,
+  File "/usr/lib64/python3.9/subprocess.py", line 505, in run
+    with Popen(*popenargs, **kwargs) as process:
+  File "/usr/lib64/python3.9/subprocess.py", line 951, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/usr/lib64/python3.9/subprocess.py", line 1837, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'git'

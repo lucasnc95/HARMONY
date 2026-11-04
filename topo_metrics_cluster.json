@@ -1,0 +1,12 @@
+{
+  "pcie_latency_ns": [42780.25, 31074.1],
+  "pcie_bandwidth_gbps": [10.79253818, 10.37190217],
+  "mpi_latency_ns": [0, 4998767.433, 4999223.567, 0],
+  "mpi_bandwidth_gbps": [0, 0.02786097291, 0.03073437697, 0],
+  "numa_distance": [],
+  "device_numa_node": [],
+  "memory_contention_factor": [],
+  "thermal_tdp_watts": [],
+  "current_power_watts": [],
+  "synthetic": false
+}

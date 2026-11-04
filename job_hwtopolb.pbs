@@ -1,0 +1,81 @@
+#!/bin/bash
+#PBS -N hwtopolb_eval
+#PBS -j oe
+#PBS -o hwtopolb_eval.out
+#PBS -l walltime=01:00:00
+#PBS -l select=1:ncpus=4:mpiprocs=1:mem=8gb:ngpus=1:vnode=compute-1-0[0]+1:ncpus=4:mpiprocs=1:mem=8gb:ngpus=1:vnode=compute-1-1[0]
+#PBS -l place=free
+
+set -euo pipefail
+
+if [[ -z "${PBS_O_WORKDIR:-}" || -z "${PBS_NODEFILE:-}" ]]; then
+    echo "PBS_O_WORKDIR and PBS_NODEFILE must be set by PBS" >&2
+    exit 1
+fi
+cd "$PBS_O_WORKDIR"
+
+module load gnu13/13.2.0
+module load openmpi5/5.0.5
+module load prun/2.2
+
+echo "=== Allocated MPI slots ==="
+cat "$PBS_NODEFILE"
+if [[ $(wc -l < "$PBS_NODEFILE") -ne 2 ]]; then
+    echo "Expected exactly two PBS MPI slots" >&2
+    exit 1
+fi
+echo "=== Toolchain ==="
+module list 2>&1
+command -v mpirun
+command -v prun
+bin_dir="$PBS_O_WORKDIR/build/cluster"
+for binary in test_topo_metrics.out test_numa_cost.out test_hierarchical.out \
+              test_algorithms.out test_contention_power.out \
+              test_probe_runtime_integration.out test_async_halo_opencl.out \
+              topo_probe.out kneighbor.out leanmd.out; do
+    if [[ ! -x "$bin_dir/$binary" ]]; then
+        echo "Missing $bin_dir/$binary; run bash cluster_build.sh on the frontend" >&2
+        exit 1
+    fi
+done
+
+echo "=== Run the five core test suites ==="
+mpirun -n 1 "$bin_dir/test_topo_metrics.out"
+mpirun -n 1 "$bin_dir/test_numa_cost.out"
+prun "$bin_dir/test_numa_cost.out"
+prun "$bin_dir/test_hierarchical.out"
+mpirun -n 1 "$bin_dir/test_algorithms.out"
+prun "$bin_dir/test_algorithms.out"
+mpirun -n 1 "$bin_dir/test_contention_power.out"
+prun "$bin_dir/test_contention_power.out"
+
+echo "=== Measure GPU and MPI topology ==="
+prun "$bin_dir/topo_probe.out" --output-json topo_metrics_cluster.json
+python3 - topo_metrics_cluster.json <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    metrics = json.load(source)
+if metrics.get("synthetic") or len(metrics["pcie_latency_ns"]) != 2:
+    raise SystemExit("Expected exactly two measured OpenCL GPUs")
+if len(metrics["mpi_latency_ns"]) != 4:
+    raise SystemExit("Expected a two-rank MPI topology matrix")
+PY
+
+echo "=== Validate the probe/runtime contract and asynchronous halo ==="
+prun "$bin_dir/test_probe_runtime_integration.out" topo_metrics_cluster.json
+timeout 180s prun "$bin_dir/test_async_halo_opencl.out"
+
+echo "=== Compare ERAD and HWTOPOLB on OpenCL GPUs ==="
+export MPI_LAUNCHER=prun
+export BENCH_BIN_DIR="$bin_dir"
+export BENCH_SKIP_BUILD=1
+bash ./benchmarks/compare_algos.sh
+awk -F, '
+    NR == 1 { next }
+    $3 != "gpu_opencl" { print "Unexpected execution mode: " $3 > "/dev/stderr"; exit 1 }
+    END { if (NR != 5) { print "Incomplete benchmark summary" > "/dev/stderr"; exit 1 } }
+' benchmarks/comparison_summary.csv
+
+echo "=== Cluster evaluation completed ==="
