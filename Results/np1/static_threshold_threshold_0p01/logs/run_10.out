@@ -1,0 +1,254 @@
+=== Dispositivos locais do rank 0 ===
+global=0 local=0 nome="NVIDIA RTX 2000 Ada Generation" compute_units=22
+global=1 local=1 nome="Intel(R) Xeon(R) CPU           E5620  @ 2.40GHz" compute_units=16
+
+=== PARTICOES INICIAIS ===
+=== Particoes globais ===
+part[0] device_global=0 rank=0 local_index=0 offset=0 count=4000000
+part[1] device_global=1 rank=0 local_index=1 offset=4000000 count=4000000
+
+X = 50 Y = 50 Z = 3200 Iterations = 10000
+[DCL][balance-metrics] iteration=100
+  policy=threshold
+  action=rebalance
+  reason=accepted by fixed threshold; diff=0.489688, threshold=0.01
+  T_compute_interval_s=17.2847
+  T_comm_interval_s=0
+  T_balance_total_s=0.255955
+  T_rebalance_apply_s=0.0895122
+  T_compute_accum_s=17.2847
+  T_comm_accum_s=0
+  T_balance_accum_s=0.255955
+  T_rebalance_apply_accum_s=0.0895122
+  device_times_s:
+    part[0]=0.182533
+    part[1]=17.2847
+  OLD loads:
+    part[0] cum=50% share=50% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=50% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+  PROPOSED loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+  CURRENT loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+[DCL][balance-metrics] iteration=1100
+  policy=scheduled
+  action=skip
+  reason=static balance already attempted
+  T_compute_interval_s=5.2505
+  T_comm_interval_s=0
+  T_balance_total_s=0
+  T_rebalance_apply_s=0
+  T_compute_accum_s=22.5352
+  T_comm_accum_s=0
+  T_balance_accum_s=0.255955
+  T_rebalance_apply_accum_s=0.0895122
+  device_times_s:
+    part[0]=3.06723
+    part[1]=5.2505
+  OLD loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+  CURRENT loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+[DCL][balance-metrics] iteration=2100
+  policy=scheduled
+  action=skip
+  reason=static balance already attempted
+  T_compute_interval_s=4.69807
+  T_comm_interval_s=0
+  T_balance_total_s=0
+  T_rebalance_apply_s=0
+  T_compute_accum_s=27.2332
+  T_comm_accum_s=0
+  T_balance_accum_s=0.255955
+  T_rebalance_apply_accum_s=0.0895122
+  device_times_s:
+    part[0]=3.04403
+    part[1]=4.69807
+  OLD loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+  CURRENT loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+[DCL][balance-metrics] iteration=3100
+  policy=scheduled
+  action=skip
+  reason=static balance already attempted
+  T_compute_interval_s=3.91818
+  T_comm_interval_s=0
+  T_balance_total_s=0
+  T_rebalance_apply_s=0
+  T_compute_accum_s=31.1514
+  T_comm_accum_s=0
+  T_balance_accum_s=0.255955
+  T_rebalance_apply_accum_s=0.0895122
+  device_times_s:
+    part[0]=3.15983
+    part[1]=3.91818
+  OLD loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+  CURRENT loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+[DCL][balance-metrics] iteration=4100
+  policy=scheduled
+  action=skip
+  reason=static balance already attempted
+  T_compute_interval_s=3.43739
+  T_comm_interval_s=0
+  T_balance_total_s=0
+  T_rebalance_apply_s=0
+  T_compute_accum_s=34.5888
+  T_comm_accum_s=0
+  T_balance_accum_s=0.255955
+  T_rebalance_apply_accum_s=0.0895122
+  device_times_s:
+    part[0]=3.38113
+    part[1]=3.43739
+  OLD loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+  CURRENT loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+[DCL][balance-metrics] iteration=5100
+  policy=scheduled
+  action=skip
+  reason=static balance already attempted
+  T_compute_interval_s=3.41917
+  T_comm_interval_s=0
+  T_balance_total_s=0
+  T_rebalance_apply_s=0
+  T_compute_accum_s=38.008
+  T_comm_accum_s=0
+  T_balance_accum_s=0.255955
+  T_rebalance_apply_accum_s=0.0895122
+  device_times_s:
+    part[0]=3.41917
+    part[1]=3.04652
+  OLD loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+  CURRENT loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+[DCL][balance-metrics] iteration=6100
+  policy=scheduled
+  action=skip
+  reason=static balance already attempted
+  T_compute_interval_s=3.4349
+  T_comm_interval_s=0
+  T_balance_total_s=0
+  T_rebalance_apply_s=0
+  T_compute_accum_s=41.4429
+  T_comm_accum_s=0
+  T_balance_accum_s=0.255955
+  T_rebalance_apply_accum_s=0.0895122
+  device_times_s:
+    part[0]=3.4349
+    part[1]=2.81706
+  OLD loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+  CURRENT loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+[DCL][balance-metrics] iteration=7100
+  policy=scheduled
+  action=skip
+  reason=static balance already attempted
+  T_compute_interval_s=3.44682
+  T_comm_interval_s=0
+  T_balance_total_s=0
+  T_rebalance_apply_s=0
+  T_compute_accum_s=44.8897
+  T_comm_accum_s=0
+  T_balance_accum_s=0.255955
+  T_rebalance_apply_accum_s=0.0895122
+  device_times_s:
+    part[0]=3.44682
+    part[1]=2.65538
+  OLD loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+  CURRENT loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+[DCL][balance-metrics] iteration=8100
+  policy=scheduled
+  action=skip
+  reason=static balance already attempted
+  T_compute_interval_s=3.45133
+  T_comm_interval_s=0
+  T_balance_total_s=0
+  T_rebalance_apply_s=0
+  T_compute_accum_s=48.341
+  T_comm_accum_s=0
+  T_balance_accum_s=0.255955
+  T_rebalance_apply_accum_s=0.0895122
+  device_times_s:
+    part[0]=3.45133
+    part[1]=2.5383
+  OLD loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+  CURRENT loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+[DCL][balance-metrics] iteration=9100
+  policy=scheduled
+  action=skip
+  reason=static balance already attempted
+  T_compute_interval_s=3.4514
+  T_comm_interval_s=0
+  T_balance_total_s=0
+  T_rebalance_apply_s=0
+  T_compute_accum_s=51.7924
+  T_comm_accum_s=0
+  T_balance_accum_s=0.255955
+  T_rebalance_apply_accum_s=0.0895122
+  device_times_s:
+    part[0]=3.4514
+    part[1]=2.44829
+  OLD loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+  CURRENT loads:
+    part[0] cum=98.9688% share=98.9688% device_global=0 rank=0 local_index=0 offset=0 count=7917500
+    part[1] cum=100% share=1.03125% device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+    total=100%
+
+=== PARTICOES FINAIS ===
+=== Particoes globais ===
+part[0] device_global=0 rank=0 local_index=0 offset=0 count=7917500
+part[1] device_global=1 rank=0 local_index=1 offset=7917500 count=82500
+
+
+============================
+ITERACAO 10000
+Tempo de execução: 55.4949s

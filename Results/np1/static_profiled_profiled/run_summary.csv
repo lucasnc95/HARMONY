@@ -1,0 +1,11 @@
+run_id,total_time_s,metrics_file,timing_file,log_file
+1,55.866132671,Results/np1/static_profiled_profiled/metrics_run_1.csv,Results/np1/static_profiled_profiled/total_time_run_1.txt,Results/np1/static_profiled_profiled/logs/run_1.out
+2,55.366674943,Results/np1/static_profiled_profiled/metrics_run_2.csv,Results/np1/static_profiled_profiled/total_time_run_2.txt,Results/np1/static_profiled_profiled/logs/run_2.out
+3,55.941681017,Results/np1/static_profiled_profiled/metrics_run_3.csv,Results/np1/static_profiled_profiled/total_time_run_3.txt,Results/np1/static_profiled_profiled/logs/run_3.out
+4,55.415870889,Results/np1/static_profiled_profiled/metrics_run_4.csv,Results/np1/static_profiled_profiled/total_time_run_4.txt,Results/np1/static_profiled_profiled/logs/run_4.out
+5,55.812477705,Results/np1/static_profiled_profiled/metrics_run_5.csv,Results/np1/static_profiled_profiled/total_time_run_5.txt,Results/np1/static_profiled_profiled/logs/run_5.out
+6,56.028731650,Results/np1/static_profiled_profiled/metrics_run_6.csv,Results/np1/static_profiled_profiled/total_time_run_6.txt,Results/np1/static_profiled_profiled/logs/run_6.out
+7,55.965810133,Results/np1/static_profiled_profiled/metrics_run_7.csv,Results/np1/static_profiled_profiled/total_time_run_7.txt,Results/np1/static_profiled_profiled/logs/run_7.out
+8,55.920707200,Results/np1/static_profiled_profiled/metrics_run_8.csv,Results/np1/static_profiled_profiled/total_time_run_8.txt,Results/np1/static_profiled_profiled/logs/run_8.out
+9,55.880253020,Results/np1/static_profiled_profiled/metrics_run_9.csv,Results/np1/static_profiled_profiled/total_time_run_9.txt,Results/np1/static_profiled_profiled/logs/run_9.out
+10,55.902578936,Results/np1/static_profiled_profiled/metrics_run_10.csv,Results/np1/static_profiled_profiled/total_time_run_10.txt,Results/np1/static_profiled_profiled/logs/run_10.out

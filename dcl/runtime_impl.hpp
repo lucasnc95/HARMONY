@@ -3,22 +3,14 @@
 #define DCL_RUNTIME_IMPL_HPP
 
 #include "runtime.hpp"
-#include "topo_metrics_io.hpp"
-#include "algorithms.hpp"
-#ifndef CL_TARGET_OPENCL_VERSION
-#define CL_TARGET_OPENCL_VERSION 300
-#endif
 #include <CL/cl.h>
-#include <CL/cl_ext.h>
 #include <mpi.h>
 
 #include <algorithm>
-#include <numeric>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <exception>
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -33,7 +25,6 @@
 #include <iostream>
 #include <chrono>
 #include <climits>
-#include <iomanip>
 
 namespace dcl {
 
@@ -54,24 +45,6 @@ static inline void check_cl(cl_int code, const char* what) {
     std::ostringstream oss;
     oss << "OpenCL failure at " << what << " code=" << code;
     throw Error(oss.str());
-}
-
-static inline std::string device_string(cl_device_id device, cl_device_info field) {
-    std::size_t size = 0;
-    check_cl(clGetDeviceInfo(device, field, 0, nullptr, &size), "clGetDeviceInfo(string size)");
-    std::string value(size, '\0');
-    check_cl(clGetDeviceInfo(device, field, size, value.data(), nullptr), "clGetDeviceInfo(string)");
-    if (!value.empty() && value.back() == '\0') value.pop_back();
-    return value;
-}
-
-static inline std::string platform_string(cl_platform_id platform, cl_platform_info field) {
-    std::size_t size = 0;
-    check_cl(clGetPlatformInfo(platform, field, 0, nullptr, &size), "clGetPlatformInfo(string size)");
-    std::string value(size, '\0');
-    check_cl(clGetPlatformInfo(platform, field, size, value.data(), nullptr), "clGetPlatformInfo(string)");
-    if (!value.empty() && value.back() == '\0') value.pop_back();
-    return value;
 }
 
 static inline std::string slurp_file(const std::string& path) {
@@ -197,15 +170,9 @@ inline std::vector<float> compute_loads_from_times_prefix_inverse(
     double capacidade_total = 0.0;
 
     for (int i = 0; i < participantes; ++i) {
-        const double t = tempos_medidos[static_cast<std::size_t>(i)];
-        // A zero or negative time means the participant has no devices / zero capacity.
-        // Do NOT clamp to 1e-9: that would assign enormous (1/1e-9) capacity to
-        // device-less ranks, causing their allocated elements to vanish from the partition.
-        if (t > 0.0) {
-            capacidade[static_cast<std::size_t>(i)] = 1.0 / t;
-            capacidade_total += capacidade[static_cast<std::size_t>(i)];
-        }
-        // else capacidade[i] stays 0.0 — this rank gets zero load share
+        const double t = std::max(tempos_medidos[static_cast<std::size_t>(i)], 1.0e-9);
+        capacidade[static_cast<std::size_t>(i)] = 1.0 / t;
+        capacidade_total += capacidade[static_cast<std::size_t>(i)];
     }
 
     if (capacidade_total <= 0.0) {
@@ -236,7 +203,43 @@ inline std::vector<float> compute_loads_from_partition_throughput(
     const std::vector<double>& times,
     const std::vector<DevicePartition>& partitions
 ) {
-    return ::dcl::erad_loads(times, partitions);
+    if (times.empty() || times.size() != partitions.size()) {
+        return {};
+    }
+
+    std::vector<double> capacity(times.size(), 0.0);
+    double total_capacity = 0.0;
+
+    for (std::size_t i = 0; i < times.size(); ++i) {
+        if (partitions[i].element_count == 0 || times[i] <= 1.0e-12) {
+            continue;
+        }
+
+        capacity[i] =
+            static_cast<double>(partitions[i].element_count) / times[i];
+        total_capacity += capacity[i];
+    }
+
+    std::vector<float> loads(times.size(), 0.0f);
+    if (total_capacity <= 0.0) {
+        const float step = 1.0f / static_cast<float>(times.size());
+        float acc = 0.0f;
+        for (std::size_t i = 0; i < loads.size(); ++i) {
+            acc += step;
+            loads[i] = acc;
+        }
+        loads.back() = 1.0f;
+        return loads;
+    }
+
+    double cumulative = 0.0;
+    for (std::size_t i = 0; i < capacity.size(); ++i) {
+        cumulative += capacity[i] / total_capacity;
+        loads[i] = static_cast<float>(cumulative);
+    }
+
+    loads.back() = 1.0f;
+    return loads;
 }
 
 static inline std::vector<float> compute_loads_from_times(const std::vector<double>& times) {
@@ -273,57 +276,9 @@ static inline float l2_norm_diff(const std::vector<float>& a, const std::vector<
     return static_cast<float>(std::sqrt(acc));
 }
 
-template<typename T, typename Deleter>
-class AutoCLHandle {
-    T handle_{nullptr};
-public:
-    AutoCLHandle() = default;
-    AutoCLHandle(T h) : handle_(h) {}
-    ~AutoCLHandle() { if (handle_) Deleter()(handle_); }
-    AutoCLHandle(const AutoCLHandle&) = delete;
-    AutoCLHandle& operator=(const AutoCLHandle&) = delete;
-    AutoCLHandle(AutoCLHandle&& other) noexcept : handle_(other.handle_) {
-        other.handle_ = nullptr;
-    }
-    AutoCLHandle& operator=(AutoCLHandle&& other) noexcept {
-        if (this != &other) {
-            if (handle_) Deleter()(handle_);
-            handle_ = other.handle_;
-            other.handle_ = nullptr;
-        }
-        return *this;
-    }
-    AutoCLHandle& operator=(T h) {
-        if (handle_) Deleter()(handle_);
-        handle_ = h;
-        return *this;
-    }
-    operator T() const { return handle_; }
-    T get() const { return handle_; }
-    T* ptr() { return &handle_; }
-    bool operator==(T h) const { return handle_ == h; }
-    bool operator!=(T h) const { return handle_ != h; }
-};
-
-struct CLMemDeleter { void operator()(cl_mem m) const { if(m) clReleaseMemObject(m); } };
-struct CLContextDeleter { void operator()(cl_context m) const { if(m) clReleaseContext(m); } };
-struct CLQueueDeleter { void operator()(cl_command_queue m) const { if(m) clReleaseCommandQueue(m); } };
-struct CLProgramDeleter { void operator()(cl_program m) const { if(m) clReleaseProgram(m); } };
-struct CLKernelDeleter { void operator()(cl_kernel m) const { if(m) clReleaseKernel(m); } };
-struct EventGuard {
-    cl_event& event;
-    ~EventGuard() { if (event != nullptr) clReleaseEvent(event); }
-};
-
-using AutoMem = AutoCLHandle<cl_mem, CLMemDeleter>;
-using AutoContext = AutoCLHandle<cl_context, CLContextDeleter>;
-using AutoQueue = AutoCLHandle<cl_command_queue, CLQueueDeleter>;
-using AutoProgram = AutoCLHandle<cl_program, CLProgramDeleter>;
-using AutoKernel = AutoCLHandle<cl_kernel, CLKernelDeleter>;
-
 struct PlatformContext {
     cl_platform_id platform{nullptr};
-    AutoContext context;
+    cl_context context{nullptr};
     std::vector<cl_device_id> devices;
 };
 
@@ -335,8 +290,8 @@ struct LocalDevice {
 
     cl_device_id device{nullptr};
     cl_context context{nullptr};
-    AutoQueue kernel_queue;
-    AutoQueue transfer_queue;
+    cl_command_queue kernel_queue{nullptr};
+    cl_command_queue transfer_queue{nullptr};
 
     cl_uint compute_units{0};
     DeviceKind kind{DeviceKind::all};
@@ -345,13 +300,13 @@ struct LocalDevice {
 
 struct RegisteredField {
     FieldSpec spec;
-    std::vector<AutoMem> replicas;
+    std::vector<cl_mem> replicas;
 };
 
 struct RegisteredKernel {
     KernelSpec spec;
-    std::vector<AutoProgram> programs_per_platform;
-    std::vector<AutoKernel> kernels_per_local_device;
+    std::vector<cl_program> programs_per_platform;
+    std::vector<cl_kernel> kernels_per_local_device;
 };
 
 } // namespace detail
@@ -370,11 +325,33 @@ public:
 
     ~Impl() {
         release_tracked_field_events();
-#ifdef __CPPCHECK__
-        cppcheck_anchor_unused();
-#endif
         reset_balance_window_events();
-        clear_runtime_state();
+
+        for (auto& kv : kernels_) {
+            detail::RegisteredKernel& rk = kv.second;
+            for (cl_kernel k : rk.kernels_per_local_device) {
+                if (k != nullptr) clReleaseKernel(k);
+            }
+            for (cl_program p : rk.programs_per_platform) {
+                if (p != nullptr) clReleaseProgram(p);
+            }
+        }
+
+        for (auto& kv : fields_) {
+            detail::RegisteredField& rf = kv.second;
+            for (cl_mem mem : rf.replicas) {
+                if (mem != nullptr) clReleaseMemObject(mem);
+            }
+        }
+
+        for (std::size_t i = 0; i < local_devices_.size(); ++i) {
+            if (local_devices_[i].kernel_queue != nullptr) clReleaseCommandQueue(local_devices_[i].kernel_queue);
+            if (local_devices_[i].transfer_queue != nullptr) clReleaseCommandQueue(local_devices_[i].transfer_queue);
+        }
+
+        for (std::size_t i = 0; i < platforms_.size(); ++i) {
+            if (platforms_[i].context != nullptr) clReleaseContext(platforms_[i].context);
+        }
     }
 
     void initialize_mpi_from_runtime() {
@@ -395,202 +372,148 @@ public:
     void discover_devices(const DeviceSelection& selection) {
         clear_runtime_state();
 
-        try {
-            std::exception_ptr local_discovery_error;
-            try {
-            cl_uint n_platforms = 0;
-            const cl_int platform_status = clGetPlatformIDs(0, nullptr, &n_platforms);
-            if (platform_status != CL_PLATFORM_NOT_FOUND_KHR) {
-                detail::check_cl(platform_status, "clGetPlatformIDs(count)");
-            }
+        cl_uint n_platforms = 0;
+        detail::check_cl(clGetPlatformIDs(0, nullptr, &n_platforms), "clGetPlatformIDs(count)");
+        if (n_platforms == 0) {
+            all_device_counts_.assign(size_, 0);
+            return;
+        }
 
-            std::vector<cl_platform_id> platform_ids(n_platforms);
-            if (n_platforms > 0) {
-                detail::check_cl(clGetPlatformIDs(n_platforms, platform_ids.data(), nullptr),
-                                 "clGetPlatformIDs(list)");
-            }
+        std::vector<cl_platform_id> platform_ids(n_platforms);
+        detail::check_cl(clGetPlatformIDs(n_platforms, platform_ids.data(), nullptr), "clGetPlatformIDs(list)");
 
-            int next_local_index = 0;
-            const int max_per_rank = (selection.max_devices_per_rank <= 0)
-                ? std::numeric_limits<int>::max()
-                : selection.max_devices_per_rank;
+        int next_local_index = 0;
+        const int max_per_rank = (selection.max_devices_per_rank <= 0)
+            ? std::numeric_limits<int>::max()
+            : selection.max_devices_per_rank;
 
-            for (cl_uint p = 0; p < n_platforms; ++p) {
-                cl_uint dev_count = 0;
-                cl_int err = clGetDeviceIDs(platform_ids[p], CL_DEVICE_TYPE_ALL, 0, nullptr, &dev_count);
-                if (err == CL_DEVICE_NOT_FOUND || dev_count == 0) continue;
-                detail::check_cl(err, "clGetDeviceIDs(count)");
+        for (cl_uint p = 0; p < n_platforms; ++p) {
+            cl_uint dev_count = 0;
+            cl_int err = clGetDeviceIDs(platform_ids[p], CL_DEVICE_TYPE_ALL, 0, nullptr, &dev_count);
+            if (err == CL_DEVICE_NOT_FOUND || dev_count == 0) continue;
+            detail::check_cl(err, "clGetDeviceIDs(count)");
 
-                std::vector<cl_device_id> platform_devices(dev_count);
+            std::vector<cl_device_id> platform_devices(dev_count);
+            detail::check_cl(
+                clGetDeviceIDs(platform_ids[p], CL_DEVICE_TYPE_ALL, dev_count, platform_devices.data(), nullptr),
+                "clGetDeviceIDs(list)"
+            );
+
+            std::vector<cl_device_id> selected_devices;
+            for (cl_uint i = 0; i < dev_count; ++i) {
+                if (next_local_index >= max_per_rank) break;
+                cl_device_type dtype = 0;
                 detail::check_cl(
-                    clGetDeviceIDs(platform_ids[p], CL_DEVICE_TYPE_ALL, dev_count, platform_devices.data(), nullptr),
-                    "clGetDeviceIDs(list)"
+                    clGetDeviceInfo(platform_devices[i], CL_DEVICE_TYPE, sizeof(dtype), &dtype, nullptr),
+                    "clGetDeviceInfo(CL_DEVICE_TYPE)"
                 );
+                const DeviceKind kind = detail::classify_device_kind(dtype);
+                if (!detail::matches(selection.kind, kind)) continue;
+                selected_devices.push_back(platform_devices[i]);
+                ++next_local_index;
+            }
 
-                std::vector<cl_device_id> selected_devices;
-                for (cl_uint i = 0; i < dev_count; ++i) {
-                    if (next_local_index >= max_per_rank) break;
-                    cl_device_type dtype = 0;
-                    detail::check_cl(
-                        clGetDeviceInfo(platform_devices[i], CL_DEVICE_TYPE, sizeof(dtype), &dtype, nullptr),
-                        "clGetDeviceInfo(CL_DEVICE_TYPE)"
-                    );
-                    const DeviceKind kind = detail::classify_device_kind(dtype);
-                    if (!detail::matches(selection.kind, kind)) continue;
-                    selected_devices.push_back(platform_devices[i]);
-                    ++next_local_index;
-                }
+            if (selected_devices.empty()) continue;
 
-                if (selected_devices.empty()) continue;
+            detail::PlatformContext pc{};
+            pc.platform = platform_ids[p];
+            pc.devices = selected_devices;
 
-                detail::PlatformContext pc{};
-                pc.platform = platform_ids[p];
-                pc.devices = selected_devices;
+            cl_context_properties props[] = {
+                CL_CONTEXT_PLATFORM,
+                reinterpret_cast<cl_context_properties>(platform_ids[p]),
+                0
+            };
 
-                cl_context_properties props[] = {
-                    CL_CONTEXT_PLATFORM,
-                    reinterpret_cast<cl_context_properties>(platform_ids[p]),
+            cl_int ctx_err = CL_SUCCESS;
+            pc.context = clCreateContext(
+                props,
+                static_cast<cl_uint>(selected_devices.size()),
+                selected_devices.data(),
+                nullptr,
+                nullptr,
+                &ctx_err
+            );
+            detail::check_cl(ctx_err, "clCreateContext");
+
+            platforms_.push_back(pc);
+            const int platform_index = static_cast<int>(platforms_.size() - 1);
+
+            for (std::size_t i = 0; i < selected_devices.size(); ++i) {
+                detail::LocalDevice ld{};
+                ld.platform_index = platform_index;
+                ld.device_index_in_platform = static_cast<int>(i);
+                ld.local_index = static_cast<int>(local_devices_.size());
+                ld.device = selected_devices[i];
+                ld.context = platforms_[platform_index].context;
+
+                char name_buf[512] = {};
+                cl_uint cus = 0;
+                cl_device_type dtype = 0;
+
+                detail::check_cl(clGetDeviceInfo(ld.device, CL_DEVICE_NAME, sizeof(name_buf), name_buf, nullptr), "clGetDeviceInfo(CL_DEVICE_NAME)");
+                detail::check_cl(clGetDeviceInfo(ld.device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cus), &cus, nullptr), "clGetDeviceInfo(CL_DEVICE_MAX_COMPUTE_UNITS)");
+                detail::check_cl(clGetDeviceInfo(ld.device, CL_DEVICE_TYPE, sizeof(dtype), &dtype, nullptr), "clGetDeviceInfo(CL_DEVICE_TYPE)");
+
+                ld.name = std::string(name_buf);
+                if (!ld.name.empty() && ld.name.back() == '\0') ld.name.pop_back();
+                ld.compute_units = static_cast<unsigned>(cus);
+                ld.kind = detail::classify_device_kind(dtype);
+
+                cl_int qerr = CL_SUCCESS;
+#if CL_TARGET_OPENCL_VERSION >= 200
+                const cl_queue_properties qprops[] = {
+                    CL_QUEUE_PROPERTIES,
+                    static_cast<cl_queue_properties>(CL_QUEUE_PROFILING_ENABLE),
                     0
                 };
-
-                cl_int ctx_err = CL_SUCCESS;
-                pc.context = clCreateContext(
-                    props,
-                    static_cast<cl_uint>(selected_devices.size()),
-                    selected_devices.data(),
-                    nullptr,
-                    nullptr,
-                    &ctx_err
-                );
-                detail::check_cl(ctx_err, "clCreateContext");
-
-                platforms_.push_back(std::move(pc));
-                const int platform_index = static_cast<int>(platforms_.size() - 1);
-
-                for (std::size_t i = 0; i < selected_devices.size(); ++i) {
-                    detail::LocalDevice ld{};
-                    ld.platform_index = platform_index;
-                    ld.device_index_in_platform = static_cast<int>(i);
-                    ld.local_index = static_cast<int>(local_devices_.size());
-                    ld.device = selected_devices[i];
-                    ld.context = platforms_[platform_index].context;
-
-                    char name_buf[512] = {};
-                    cl_uint cus = 0;
-                    cl_device_type dtype = 0;
-
-                    detail::check_cl(clGetDeviceInfo(ld.device, CL_DEVICE_NAME, sizeof(name_buf), name_buf, nullptr), "clGetDeviceInfo(CL_DEVICE_NAME)");
-                    detail::check_cl(clGetDeviceInfo(ld.device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cus), &cus, nullptr), "clGetDeviceInfo(CL_DEVICE_MAX_COMPUTE_UNITS)");
-                    detail::check_cl(clGetDeviceInfo(ld.device, CL_DEVICE_TYPE, sizeof(dtype), &dtype, nullptr), "clGetDeviceInfo(CL_DEVICE_TYPE)");
-
-                    ld.name = std::string(name_buf);
-                    if (!ld.name.empty() && ld.name.back() == '\0') ld.name.pop_back();
-                    ld.compute_units = static_cast<unsigned>(cus);
-                    ld.kind = detail::classify_device_kind(dtype);
-
-                    cl_int qerr = CL_SUCCESS;
-#if CL_TARGET_OPENCL_VERSION >= 200
-                    const cl_queue_properties qprops[] = {
-                        CL_QUEUE_PROPERTIES,
-                        static_cast<cl_queue_properties>(CL_QUEUE_PROFILING_ENABLE),
-                        0
-                    };
-                    ld.kernel_queue = clCreateCommandQueueWithProperties(ld.context, ld.device, qprops, &qerr);
-                    detail::check_cl(qerr, "clCreateCommandQueueWithProperties(kernel_queue)");
-                    ld.transfer_queue = clCreateCommandQueueWithProperties(ld.context, ld.device, qprops, &qerr);
-                    detail::check_cl(qerr, "clCreateCommandQueueWithProperties(transfer_queue)");
+                ld.kernel_queue = clCreateCommandQueueWithProperties(ld.context, ld.device, qprops, &qerr);
+                detail::check_cl(qerr, "clCreateCommandQueueWithProperties(kernel_queue)");
+                ld.transfer_queue = clCreateCommandQueueWithProperties(ld.context, ld.device, qprops, &qerr);
+                detail::check_cl(qerr, "clCreateCommandQueueWithProperties(transfer_queue)");
 #else
-                    ld.kernel_queue = clCreateCommandQueue(ld.context, ld.device, CL_QUEUE_PROFILING_ENABLE, &qerr);
-                    detail::check_cl(qerr, "clCreateCommandQueue(kernel_queue)");
-                    ld.transfer_queue = clCreateCommandQueue(ld.context, ld.device, CL_QUEUE_PROFILING_ENABLE, &qerr);
-                    detail::check_cl(qerr, "clCreateCommandQueue(transfer_queue)");
+                ld.kernel_queue = clCreateCommandQueue(ld.context, ld.device, CL_QUEUE_PROFILING_ENABLE, &qerr);
+                detail::check_cl(qerr, "clCreateCommandQueue(kernel_queue)");
+                ld.transfer_queue = clCreateCommandQueue(ld.context, ld.device, CL_QUEUE_PROFILING_ENABLE, &qerr);
+                detail::check_cl(qerr, "clCreateCommandQueue(transfer_queue)");
 #endif
 
-                    local_devices_.push_back(std::move(ld));
-                    const auto& owned_device = local_devices_.back();
+                local_devices_.push_back(ld);
 
-                    DeviceInfo info{};
-                    info.rank = rank_;
-                    info.local_index = owned_device.local_index;
-                    info.global_index = -1;
-                    info.name = owned_device.name;
-                    info.kind = owned_device.kind;
-                    info.compute_units = owned_device.compute_units;
-                    info.platform_name = detail::platform_string(platform_ids[p], CL_PLATFORM_NAME);
-                    info.platform_version = detail::platform_string(platform_ids[p], CL_PLATFORM_VERSION);
-                    info.device_version = detail::device_string(owned_device.device, CL_DEVICE_VERSION);
-                    info.driver_version = detail::device_string(owned_device.device, CL_DRIVER_VERSION);
-                    const std::string extensions = detail::device_string(owned_device.device, CL_DEVICE_EXTENSIONS);
-                    const auto has_extension = [&extensions](const std::string& name) {
-                        return (" " + extensions + " ").find(" " + name + " ") != std::string::npos;
-                    };
-                    if (has_extension("cl_khr_device_uuid")) {
-                        unsigned char uuid[CL_UUID_SIZE_KHR]{};
-                        detail::check_cl(clGetDeviceInfo(owned_device.device, CL_DEVICE_UUID_KHR, sizeof(uuid), uuid, nullptr),
-                                         "clGetDeviceInfo(CL_DEVICE_UUID_KHR)");
-                        std::ostringstream token;
-                        for (unsigned char byte : uuid) {
-                            token << std::hex << std::setfill('0') << std::setw(2)
-                                  << static_cast<unsigned>(byte);
-                        }
-                        info.identity_kind = "uuid";
-                        info.identity = token.str();
-                    } else if (has_extension("cl_khr_pci_bus_info")) {
-                        cl_device_pci_bus_info_khr pci{};
-                        detail::check_cl(clGetDeviceInfo(owned_device.device, CL_DEVICE_PCI_BUS_INFO_KHR, sizeof(pci), &pci, nullptr),
-                                         "clGetDeviceInfo(CL_DEVICE_PCI_BUS_INFO_KHR)");
-                        std::ostringstream token;
-                        token << std::hex << std::setfill('0') << std::setw(4) << pci.pci_domain << ':'
-                              << std::setw(2) << pci.pci_bus << ':' << std::setw(2) << pci.pci_device
-                              << '.' << pci.pci_function;
-                        info.identity_kind = "pci";
-                        info.identity = token.str();
-                    }
-                    devices_.push_back(info);
-                }
-
-                if (next_local_index >= max_per_rank) break;
-            }
-            } catch (...) {
-                local_discovery_error = std::current_exception();
+                DeviceInfo info{};
+                info.rank = rank_;
+                info.local_index = ld.local_index;
+                info.global_index = -1;
+                info.name = ld.name;
+                info.kind = ld.kind;
+                info.compute_units = ld.compute_units;
+                devices_.push_back(info);
             }
 
-            int local_ok = local_discovery_error ? 0 : 1;
-            int all_ok = 0;
-            detail::check_mpi(
-                MPI_Allreduce(&local_ok, &all_ok, 1, MPI_INT, MPI_MIN, comm_),
-                "MPI_Allreduce(device discovery status)"
-            );
-            if (all_ok == 0) {
-                if (local_discovery_error) std::rethrow_exception(local_discovery_error);
-                throw Error("Device discovery failed on another MPI rank");
-            }
-
-            const int local_count = static_cast<int>(devices_.size());
-            all_device_counts_.assign(size_, 0);
-            detail::check_mpi(
-                MPI_Allgather(&local_count, 1, MPI_INT, all_device_counts_.data(), 1, MPI_INT, comm_),
-                "MPI_Allgather(device_counts)"
-            );
-
-            int global_base = 0;
-            for (int r = 0; r < rank_; ++r) global_base += all_device_counts_[r];
-            for (std::size_t i = 0; i < devices_.size(); ++i) {
-                devices_[i].global_index = global_base + static_cast<int>(i);
-                local_devices_[i].global_index = devices_[i].global_index;
-            }
-
-            device_timings_.assign(local_devices_.size(), DeviceTiming{});
-            last_elapsed_local_.assign(local_devices_.size(), 0.0);
-            balance_window_start_events_.assign(local_devices_.size(), nullptr);
-            balance_window_end_events_.assign(local_devices_.size(), nullptr);
-            balance_window_valid_.assign(local_devices_.size(), false);
-            balance_window_kernel_events_.assign(local_devices_.size(), {});
-            balance_window_begin_iteration_ = 0;
-        } catch (...) {
-            clear_runtime_state();
-            throw;
+            if (next_local_index >= max_per_rank) break;
         }
+
+        const int local_count = static_cast<int>(devices_.size());
+        all_device_counts_.assign(size_, 0);
+        detail::check_mpi(
+            MPI_Allgather(&local_count, 1, MPI_INT, all_device_counts_.data(), 1, MPI_INT, comm_),
+            "MPI_Allgather(device_counts)"
+        );
+
+        int global_base = 0;
+        for (int r = 0; r < rank_; ++r) global_base += all_device_counts_[r];
+        for (std::size_t i = 0; i < devices_.size(); ++i) {
+            devices_[i].global_index = global_base + static_cast<int>(i);
+            local_devices_[i].global_index = devices_[i].global_index;
+        }
+
+        device_timings_.assign(local_devices_.size(), DeviceTiming{});
+        last_elapsed_local_.assign(local_devices_.size(), 0.0);
+        balance_window_start_events_.assign(local_devices_.size(), nullptr);
+        balance_window_end_events_.assign(local_devices_.size(), nullptr);
+        balance_window_valid_.assign(local_devices_.size(), false);
+        balance_window_kernel_events_.assign(local_devices_.size(), {});
+        balance_window_begin_iteration_ = 0;
     }
 
     const std::vector<DeviceInfo>& devices() const noexcept { return devices_; }
@@ -599,15 +522,9 @@ public:
     int rank() const noexcept { return rank_; }
     int size() const noexcept { return size_; }
     MPI_Comm communicator() const noexcept { return comm_; }
-    void set_verbose_metrics(bool enabled) noexcept { verbose_metrics_ = enabled; }
 
     FieldHandle create_field(const FieldSpec& spec) {
-        const int global_devices =
-            std::accumulate(all_device_counts_.begin(), all_device_counts_.end(), 0);
-        if (local_devices_.empty() && simulated_total_devices_ <= 0 &&
-            global_devices <= 0) {
-            throw Error("discover_devices() must be called before create_field()");
-        }
+        if (local_devices_.empty()) throw Error("discover_devices() must be called before create_field()");
         if (spec.global_elements == 0) throw Error("FieldSpec.global_elements must be > 0");
         if (spec.units_per_element == 0) throw Error("FieldSpec.units_per_element must be > 0");
         if (spec.bytes_per_unit == 0) throw Error("FieldSpec.bytes_per_unit must be > 0");
@@ -615,9 +532,7 @@ public:
         FieldHandle h{next_field_id_++};
         detail::RegisteredField rf;
         rf.spec = spec;
-        rf.replicas.resize(local_devices_.empty() && simulated_total_devices_ > 0
-            ? static_cast<std::size_t>(simulated_total_devices_)
-            : local_devices_.size());
+        rf.replicas.resize(local_devices_.size(), nullptr);
 
         const std::size_t total_bytes = spec.global_elements * spec.units_per_element * spec.bytes_per_unit;
         const cl_mem_flags flags = detail::to_opencl_flags(spec.usage);
@@ -628,31 +543,21 @@ public:
             detail::check_cl(err, "clCreateBuffer(create_field)");
         }
 
-        fields_.insert(std::make_pair(h.value, std::move(rf)));
-        try {
-            if (spec.host_ptr != nullptr && !local_devices_.empty()) {
-                write_initial_field_data(h, spec.host_ptr);
-            }
-        } catch (...) {
-            fields_.erase(h.value);
-            throw;
-        }
+        fields_.insert(std::make_pair(h.value, rf));
+        if (spec.host_ptr != nullptr) write_initial_field_data(h, spec.host_ptr);
         return h;
     }
 
     KernelHandle create_kernel(const KernelSpec& spec) {
-        if (local_devices_.empty() &&
-            std::accumulate(all_device_counts_.begin(), all_device_counts_.end(), 0) <= 0) {
-            throw Error("discover_devices() must be called before create_kernel()");
-        }
+        if (local_devices_.empty()) throw Error("discover_devices() must be called before create_kernel()");
         if (spec.source_file.empty()) throw Error("KernelSpec.source_file is empty");
         if (spec.entry_point.empty()) throw Error("KernelSpec.entry_point is empty");
 
         KernelHandle h{next_kernel_id_++};
         detail::RegisteredKernel rk;
         rk.spec = spec;
-        rk.programs_per_platform.resize(platforms_.size());
-        rk.kernels_per_local_device.resize(local_devices_.size());
+        rk.programs_per_platform.resize(platforms_.size(), nullptr);
+        rk.kernels_per_local_device.resize(local_devices_.size(), nullptr);
 
         const std::string src = detail::slurp_file(spec.source_file);
         const char* src_ptr = src.c_str();
@@ -660,7 +565,7 @@ public:
 
         for (std::size_t p = 0; p < platforms_.size(); ++p) {
             cl_int err = CL_SUCCESS;
-            detail::AutoProgram program = clCreateProgramWithSource(platforms_[p].context, 1, &src_ptr, &src_len, &err);
+            cl_program program = clCreateProgramWithSource(platforms_[p].context, 1, &src_ptr, &src_len, &err);
             detail::check_cl(err, "clCreateProgramWithSource");
 
             err = clBuildProgram(
@@ -682,19 +587,21 @@ public:
                     clGetProgramBuildInfo(program, platforms_[p].devices[i], CL_PROGRAM_BUILD_LOG, log_size, log.data(), nullptr);
                     oss << "---- device " << i << " ----\n" << log.data() << "\n";
                 }
+                clReleaseProgram(program);
                 throw Error(oss.str());
             }
-            rk.programs_per_platform[p] = std::move(program);
+            rk.programs_per_platform[p] = program;
         }
 
         for (std::size_t d = 0; d < local_devices_.size(); ++d) {
             const int p = local_devices_[d].platform_index;
             cl_int err = CL_SUCCESS;
-            rk.kernels_per_local_device[d] = clCreateKernel(rk.programs_per_platform[p], spec.entry_point.c_str(), &err);
+            cl_kernel k = clCreateKernel(rk.programs_per_platform[p], spec.entry_point.c_str(), &err);
             detail::check_cl(err, "clCreateKernel");
+            rk.kernels_per_local_device[d] = k;
         }
 
-        kernels_.insert(std::make_pair(h.value, std::move(rk)));
+        kernels_.insert(std::make_pair(h.value, rk));
         active_kernel_ = h.value;
         return h;
     }
@@ -726,6 +633,7 @@ public:
         // execute step profiling window update
         const bool collect_balance_window = (step.balance.mode != BalanceMode::off);
 
+<<<<<<< HEAD
 <<<<<<< HEAD
         for (std::size_t inv = 0; inv < step.invocations.size(); ++inv) {
             const KernelInvocation& ki = step.invocations[inv];
@@ -821,6 +729,8 @@ public:
         }
     }
 
+=======
+>>>>>>> parent of f0e098a (Comparativo HWTOPOLB (#2))
     const int every = (step.balance.interval <= 0) ? 1 : step.balance.interval;
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
 
@@ -934,41 +844,52 @@ public:
 
         if (step.halo.width_elements > 0 && !step.halo.fields.empty()) {
             std::vector<std::pair<std::size_t, cl_event>> interior_events;
-            std::vector<std::pair<std::size_t, cl_event>> border_events;
-            try {
-                run_interior_phase(rk, ki, interior_events, step.halo.width_elements);
-                if (collect_balance_window) {
-                    update_balance_window_events(interior_events, {});
-                    append_balance_window_kernel_events(interior_events);
-                }
-                record_field_write_events(output_fields, interior_events);
-                exchange_halo_set(step.halo);
-                run_border_phase(rk, ki, border_events, step.halo.width_elements);
-                if (collect_balance_window) {
-                    update_balance_window_events({}, border_events);
-                    append_balance_window_kernel_events(border_events);
-                }
-                record_field_write_events(output_fields, border_events);
-            } catch (...) {
-                release_kernel_events(interior_events);
-                release_kernel_events(border_events);
-                throw;
+
+            run_interior_phase(
+                rk,
+                ki,
+                interior_events,
+                step.halo.width_elements
+            );
+
+            if (collect_balance_window) {
+                update_balance_window_events(interior_events, {});
+                append_balance_window_kernel_events(interior_events);
             }
+
+            record_field_write_events(output_fields, interior_events);
+
+            exchange_halo_set(step.halo);
+
+            std::vector<std::pair<std::size_t, cl_event>> border_events;
+
+            run_border_phase(
+                rk,
+                ki,
+                border_events,
+                step.halo.width_elements
+            );
+
+            if (collect_balance_window) {
+                update_balance_window_events({}, border_events);
+                append_balance_window_kernel_events(border_events);
+            }
+
+            record_field_write_events(output_fields, border_events);
+
             release_kernel_events(interior_events);
             release_kernel_events(border_events);
         } else {
             std::vector<std::pair<std::size_t, cl_event>> full_events;
-            try {
-                run_full_phase(rk, ki, full_events);
-                if (collect_balance_window) {
-                    update_balance_window_events(full_events, full_events);
-                    append_balance_window_kernel_events(full_events);
-                }
-                record_field_write_events(output_fields, full_events);
-            } catch (...) {
-                release_kernel_events(full_events);
-                throw;
+
+            run_full_phase(rk, ki, full_events);
+
+            if (collect_balance_window) {
+                update_balance_window_events(full_events, full_events);
+                append_balance_window_kernel_events(full_events);
             }
+
+            record_field_write_events(output_fields, full_events);
             release_kernel_events(full_events);
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
         }
@@ -988,16 +909,13 @@ public:
     bool should_try = false;
     const char* no_try_reason = "not scheduled";
 
-    if (rebalance_fields.empty() && step.balance.mode != BalanceMode::hierarchical) {
+    if (rebalance_fields.empty()) {
         should_try = false;
         no_try_reason = "no proportional rebalance_source field";
     } else if (step.balance.mode == BalanceMode::dynamic_threshold ||
-               step.balance.mode == BalanceMode::dynamic_profiled ||
-               step.balance.mode == BalanceMode::hierarchical) {
+               step.balance.mode == BalanceMode::dynamic_profiled) {
         should_try = true;
-        no_try_reason = (step.balance.mode == BalanceMode::hierarchical)
-            ? "hierarchical interval hit"
-            : "dynamic interval hit";
+        no_try_reason = "dynamic interval hit";
     } else if (step.balance.mode == BalanceMode::static_threshold ||
                step.balance.mode == BalanceMode::static_profiled) {
         bool& attempted = static_balance_attempted_[step.name];
@@ -1017,7 +935,7 @@ public:
             step.balance.mode == BalanceMode::static_threshold) {
             this->maybe_rebalance_from_timings(
                 rebalance_fields,
-                step.balance
+                step.balance.threshold
             );
         } else if (step.balance.mode == BalanceMode::dynamic_profiled ||
                    step.balance.mode == BalanceMode::static_profiled) {
@@ -1026,8 +944,6 @@ public:
                 step.balance,
                 step.balance.interval
             );
-        } else if (step.balance.mode == BalanceMode::hierarchical) {
-            this->maybe_rebalance_hierarchical(rebalance_fields);
         }
     } else {
         const std::vector<double> global_times =
@@ -1051,46 +967,24 @@ public:
     }
 }
     void rebalance_to(const std::vector<float>& loads) {
-    int local_invalid = (!partition_.has_value() || partitions_.empty() ||
-        (rank_ == 0 && loads.empty()) ||
-        (!loads.empty() && loads.size() != partitions_.size())) ? 1 : 0;
-    int any_invalid = 0;
-    detail::check_mpi(
-        MPI_Allreduce(&local_invalid, &any_invalid, 1, MPI_INT, MPI_MAX, comm_),
-        "MPI_Allreduce(rebalance input status)"
-    );
-    if (any_invalid) throw Error("rebalance_to(): inconsistent partition or load input");
-
-    unsigned long long local_shape[2] = {
-        static_cast<unsigned long long>(partitions_.size()),
-        static_cast<unsigned long long>(partition_->global_elements)
-    };
-    unsigned long long min_shape[2] = {};
-    unsigned long long max_shape[2] = {};
-    detail::check_mpi(
-        MPI_Allreduce(local_shape, min_shape, 2, MPI_UNSIGNED_LONG_LONG, MPI_MIN, comm_),
-        "MPI_Allreduce(rebalance minimum shape)"
-    );
-    detail::check_mpi(
-        MPI_Allreduce(local_shape, max_shape, 2, MPI_UNSIGNED_LONG_LONG, MPI_MAX, comm_),
-        "MPI_Allreduce(rebalance maximum shape)"
-    );
-    if (min_shape[0] != max_shape[0] || min_shape[1] != max_shape[1]) {
-        throw Error("rebalance_to(): partition shape differs across ranks");
+    if (!partition_.has_value()) {
+        throw Error("rebalance_to(): partition must be configured before rebalancing");
     }
 
-    std::vector<float> synced_loads = loads;
-    if (rank_ != 0) {
-        synced_loads.resize(partitions_.size(), 0.0f);
+    if (partitions_.empty()) {
+        throw Error("rebalance_to(): no partitions available");
     }
-    
-    detail::check_mpi(
-        MPI_Bcast(synced_loads.data(), static_cast<int>(partitions_.size()), MPI_FLOAT, 0, comm_),
-        "MPI_Bcast(rebalance loads)"
-    );
+
+    if (loads.empty()) {
+        throw Error("rebalance_to(): loads vector is empty");
+    }
+
+    if (loads.size() != partitions_.size()) {
+        throw Error("rebalance_to(): loads size must match number of partitions");
+    }
 
     // From now on, loads is cumulative: [0.10, 0.20, ..., 1.00].
-    std::vector<float> cumulative = synced_loads;
+    std::vector<float> cumulative = loads;
 
     float prev = 0.0f;
     for (std::size_t i = 0; i < cumulative.size(); ++i) {
@@ -1160,44 +1054,18 @@ public:
     if (new_parts.size() != old_parts.size()) {
         throw Error("rebalance_to(): rounded partition count mismatch");
     }
-    auto partition_signature = [](const std::vector<DevicePartition>& parts) {
-        unsigned long long hash = 1469598103934665603ULL;
-        for (const auto& part : parts) {
-            for (unsigned long long value : {
-                    static_cast<unsigned long long>(part.global_offset),
-                    static_cast<unsigned long long>(part.element_count),
-                    static_cast<unsigned long long>(part.owning_rank),
-                    static_cast<unsigned long long>(part.device_global_index)}) {
-                hash = (hash ^ value) * 1099511628211ULL;
-            }
-        }
-        return hash;
-    };
-    unsigned long long local_hash[2] = {
-        partition_signature(old_parts), partition_signature(new_parts)
-    };
-    unsigned long long min_hash[2] = {};
-    unsigned long long max_hash[2] = {};
-    detail::check_mpi(
-        MPI_Allreduce(local_hash, min_hash, 2, MPI_UNSIGNED_LONG_LONG, MPI_MIN, comm_),
-        "MPI_Allreduce(rebalance minimum partition signature)"
-    );
-    detail::check_mpi(
-        MPI_Allreduce(local_hash, max_hash, 2, MPI_UNSIGNED_LONG_LONG, MPI_MAX, comm_),
-        "MPI_Allreduce(rebalance maximum partition signature)"
-    );
-    if (min_hash[0] != max_hash[0] || min_hash[1] != max_hash[1]) {
-        throw Error("rebalance_to(): partition map differs across ranks");
-    }
 
-    bool same = true;
-    for (std::size_t i = 0; i < old_parts.size(); ++i) {
-        if (old_parts[i].global_offset != new_parts[i].global_offset ||
-            old_parts[i].element_count != new_parts[i].element_count ||
-            old_parts[i].owning_rank   != new_parts[i].owning_rank ||
-            old_parts[i].local_index   != new_parts[i].local_index) {
-            same = false;
-            break;
+    bool same = (old_parts.size() == new_parts.size());
+
+    if (same) {
+        for (std::size_t i = 0; i < old_parts.size(); ++i) {
+            if (old_parts[i].global_offset != new_parts[i].global_offset ||
+                old_parts[i].element_count != new_parts[i].element_count ||
+                old_parts[i].owning_rank   != new_parts[i].owning_rank ||
+                old_parts[i].local_index   != new_parts[i].local_index) {
+                same = false;
+                break;
+            }
         }
     }
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
@@ -1429,7 +1297,7 @@ public:
         detail::check_mpi(MPI_Barrier(comm_), "MPI_Barrier(synchronize)");
     }
 
-public:
+private:
     void reduce_bytes_bor(const unsigned char* sendbuf,
                           unsigned char* recvbuf,
                           std::size_t total_bytes,
@@ -1534,7 +1402,7 @@ public:
     }
 
     void print_partition_loads(const std::vector<float>& loads) const {
-        if (!verbose_metrics_ || rank_ != 0) return;
+        if (rank_ != 0) return;
 
         const std::vector<float> individual = detail::cumulative_to_individual(loads);
 
@@ -1561,14 +1429,13 @@ public:
     void clear_runtime_state() {
         release_tracked_field_events();
         reset_balance_window_events();
-        // Fields and kernels release their device resources before queues and contexts.
-        fields_.clear();
-        kernels_.clear();
-        local_devices_.clear();
         platforms_.clear();
+        local_devices_.clear();
         devices_.clear();
         partitions_.clear();
         all_device_counts_.clear();
+        fields_.clear();
+        kernels_.clear();
         current_loads_.clear();
         device_timings_.clear();
         last_elapsed_local_.clear();
@@ -1611,10 +1478,7 @@ public:
         if (!partition_.has_value()) return;
 
         int total_devices = 0;
-        total_devices = std::accumulate(all_device_counts_.begin(), all_device_counts_.end(), 0);
-        if (total_devices <= 0 && simulated_total_devices_ > 0) {
-            total_devices = simulated_total_devices_;
-        }
+        for (int c : all_device_counts_) total_devices += c;
         if (total_devices <= 0) return;
 
         const std::size_t n = partition_->global_elements;
@@ -1681,8 +1545,9 @@ std::vector<DevicePartition> partitions_from_loads(const std::vector<float>& loa
                 static_cast<double>(cumulative[i]) * static_cast<double>(total_units);
             std::size_t cut = static_cast<std::size_t>(std::llround(raw));
 
-            const std::size_t min_cut = unit_cuts[i];
-            const std::size_t max_cut = total_units;
+            const std::size_t min_cut = unit_cuts[i] + 1;
+            const std::size_t remaining_parts = cumulative.size() - (i + 1);
+            const std::size_t max_cut = total_units - remaining_parts;
 
             if (cut < min_cut) cut = min_cut;
             if (cut > max_cut) cut = max_cut;
@@ -1755,14 +1620,7 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
 
         detail::RegisteredField& rf = it->second;
         const std::size_t total_bytes = rf.spec.global_elements * rf.spec.units_per_element * rf.spec.bytes_per_unit;
-        struct EventOwner {
-            std::vector<cl_event> events;
-            ~EventOwner() {
-                for (cl_event event : events) {
-                    if (event != nullptr) clReleaseEvent(event);
-                }
-            }
-        } write_events;
+        std::vector<cl_event> write_events;
 
         for (std::size_t d = 0; d < local_devices_.size(); ++d) {
             cl_event ev = nullptr;
@@ -1780,14 +1638,13 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
                 ),
                 "clEnqueueWriteBuffer(write_initial_field_data)"
             );
-            write_events.events.push_back(ev);
-            detail::check_cl(clFlush(local_devices_[d].transfer_queue),
-                             "clFlush(initial field write)");
+            write_events.push_back(ev);
         }
 
-        for (cl_event ev : write_events.events) {
+        for (cl_event ev : write_events) {
             if (ev != nullptr) {
                 detail::check_cl(clWaitForEvents(1, &ev), "clWaitForEvents(write_initial_field_data)");
+                clReleaseEvent(ev);
             }
         }
     }
@@ -1848,15 +1705,16 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
 
         std::vector<FieldHandle> out;
         out.reserve(ids.size());
-        std::transform(ids.begin(), ids.end(), std::back_inserter(out),
-                       [](int id) { return FieldHandle{id}; });
+        for (int id : ids) {
+            out.push_back(FieldHandle{id});
+        }
         return out;
     }
 
     std::optional<FieldHandle> first_field_with_role(const ExecutionStep& step, StepFieldRole role) {
-        const auto it = std::find_if(step.field_tags.begin(), step.field_tags.end(),
-                                     [role](const StepFieldTag& tag) { return tag.role == role; });
-        if (it != step.field_tags.end()) return it->field;
+        for (const StepFieldTag& tag : step.field_tags) {
+            if (tag.role == role) return tag.field;
+        }
         return std::nullopt;
     }
 
@@ -1903,6 +1761,9 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
     ) const {
         std::vector<cl_event> deps;
         for (std::size_t i = 0; i < binding.args.size(); ++i) {
+            const unsigned idx = binding.args[i].first;
+            if (idx == 0) continue;
+
             const KernelArg& arg = binding.args[i].second;
             const FieldHandle* fh = std::get_if<FieldHandle>(&arg);
             if (fh == nullptr) continue;
@@ -1915,15 +1776,14 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
             cl_event ev = it->second[local_device];
             if (ev == nullptr) continue;
 
-            const bool seen = std::any_of(deps.begin(), deps.end(),
-                                          [ev](cl_event existing) { return existing == ev; });
+            bool seen = false;
+            for (cl_event existing : deps) {
+                if (existing == ev) {
+                    seen = true;
+                    break;
+                }
+            }
             if (!seen) deps.push_back(ev);
-        }
-        if (!deps.empty() && local_device < local_devices_.size()) {
-            detail::check_cl(clFlush(local_devices_[local_device].kernel_queue),
-                             "clFlush(kernel dependency producer)");
-            detail::check_cl(clFlush(local_devices_[local_device].transfer_queue),
-                             "clFlush(transfer dependency producer)");
         }
         return deps;
     }
@@ -1992,8 +1852,6 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
             cl_event ev = kernel_events[i].second;
             if (ev == nullptr) continue;
 
-            detail::check_cl(clFlush(local_devices_[d].kernel_queue),
-                             "clFlush(kernel profiling)");
             detail::check_cl(clWaitForEvents(1, &ev), "clWaitForEvents(kernel profiling)");
 
             cl_ulong t0 = 0;
@@ -2087,7 +1945,6 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
         for (std::size_t d = 0; d < local_devices_.size(); ++d) {
             if (d >= balance_window_kernel_events_.size()) continue;
 
-            detail::check_cl(clFlush(local_devices_[d].kernel_queue), "clFlush(kernel queue)");
             for (cl_event ev : balance_window_kernel_events_[d]) {
                 if (ev == nullptr) continue;
 
@@ -2140,14 +1997,6 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
 
         std::vector<cl_event> marker_events;
         marker_events.reserve(local_devices_.size() * 2);
-        struct MarkerOwner {
-            std::vector<cl_event>& events;
-            ~MarkerOwner() {
-                for (cl_event event : events) {
-                    if (event != nullptr) clReleaseEvent(event);
-                }
-            }
-        } owned_markers{marker_events};
 
         for (std::size_t d = 0; d < local_devices_.size(); ++d) {
             if (local_devices_[d].kernel_queue != nullptr) {
@@ -2158,8 +2007,6 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
                 detail::check_cl(clEnqueueMarker(local_devices_[d].kernel_queue, &ev), "clEnqueueMarker(kernel queue)");
 #endif
                 marker_events.push_back(ev);
-                detail::check_cl(clFlush(local_devices_[d].kernel_queue),
-                                 "clFlush(kernel queue marker)");
             }
 
             if (local_devices_[d].transfer_queue != nullptr) {
@@ -2170,14 +2017,13 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
                 detail::check_cl(clEnqueueMarker(local_devices_[d].transfer_queue, &ev), "clEnqueueMarker(transfer queue)");
 #endif
                 marker_events.push_back(ev);
-                detail::check_cl(clFlush(local_devices_[d].transfer_queue),
-                                 "clFlush(transfer queue marker)");
             }
         }
 
         for (cl_event ev : marker_events) {
             if (ev != nullptr) {
                 detail::check_cl(clWaitForEvents(1, &ev), "clWaitForEvents(queue marker)");
+                clReleaseEvent(ev);
             }
         }
         release_tracked_field_events();
@@ -2189,7 +2035,6 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
         for (std::size_t p = 0; p < partitions_.size(); ++p) {
             const DevicePartition& dp = partitions_[p];
             if (dp.owning_rank != rank_ || dp.local_index < 0) continue;
-            if (dp.element_count == 0) continue;
 
             const std::size_t d = static_cast<std::size_t>(dp.local_index);
             cl_kernel kernel = rk.kernels_per_local_device[d];
@@ -2198,7 +2043,12 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
             const std::size_t gwo = dp.global_offset + ki.geometry.global_offset;
             const std::size_t gws = dp.element_count;
 
-            const std::size_t* lws_ptr = ki.geometry.local_size.has_value() ? &ki.geometry.local_size.value() : nullptr;
+            const std::size_t* lws_ptr = nullptr;
+            std::size_t lws_value = 0;
+            if (ki.geometry.local_size.has_value()) {
+                lws_value = *ki.geometry.local_size;
+                lws_ptr = &lws_value;
+            }
 
             const std::vector<cl_event> deps =
                 field_dependencies_for_binding(ki.binding, d);
@@ -2237,7 +2087,12 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
             const std::size_t gwo = dp.global_offset + halo + ki.geometry.global_offset;
             const std::size_t gws = dp.element_count - 2 * halo;
 
-            const std::size_t* lws_ptr = ki.geometry.local_size.has_value() ? &ki.geometry.local_size.value() : nullptr;
+            const std::size_t* lws_ptr = nullptr;
+            std::size_t lws_value = 0;
+            if (ki.geometry.local_size.has_value()) {
+                lws_value = *ki.geometry.local_size;
+                lws_ptr = &lws_value;
+            }
 
             const std::vector<cl_event> deps =
                 field_dependencies_for_binding(ki.binding, d);
@@ -2272,7 +2127,12 @@ std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& par
             cl_kernel kernel = rk.kernels_per_local_device[d];
             bind_kernel_args(d, kernel, ki.binding);
 
-            const std::size_t* lws_ptr = ki.geometry.local_size.has_value() ? &ki.geometry.local_size.value() : nullptr;
+            const std::size_t* lws_ptr = nullptr;
+            std::size_t lws_value = 0;
+            if (ki.geometry.local_size.has_value()) {
+                lws_value = *ki.geometry.local_size;
+                lws_ptr = &lws_value;
+            }
 
             const std::vector<cl_event> deps =
                 field_dependencies_for_binding(ki.binding, d);
@@ -2377,25 +2237,10 @@ inline void exchange_halos_for_field(FieldHandle fh, std::size_t halo) {
         cl_event read_right_to_left_ev = nullptr;
         cl_event write_left_ev = nullptr;
         cl_event write_right_ev = nullptr;
-        struct HaloEventOwner {
-            cl_event& read_left;
-            cl_event& read_right;
-            cl_event& write_left;
-            cl_event& write_right;
-            ~HaloEventOwner() {
-                for (cl_event event : {read_left, read_right, write_left, write_right}) {
-                    if (event != nullptr) clReleaseEvent(event);
-                }
-            }
-        } owned_events{
-            read_left_to_right_ev, read_right_to_left_ev,
-            write_left_ev, write_right_ev
-        };
 
         if (left.owning_rank == rank_) {
             const std::size_t dl = static_cast<std::size_t>(left.local_index);
             const std::vector<cl_event> deps = field_write_dependency(fh, dl);
-            if (!deps.empty()) detail::check_cl(clFlush(local_devices_[dl].kernel_queue), "clFlush(kernel queue)");
             detail::check_cl(
                 clEnqueueReadBuffer(
                     local_devices_[dl].transfer_queue,
@@ -2415,7 +2260,6 @@ inline void exchange_halos_for_field(FieldHandle fh, std::size_t halo) {
         if (right.owning_rank == rank_) {
             const std::size_t dr = static_cast<std::size_t>(right.local_index);
             const std::vector<cl_event> deps = field_write_dependency(fh, dr);
-            if (!deps.empty()) detail::check_cl(clFlush(local_devices_[dr].kernel_queue), "clFlush(kernel queue)");
             detail::check_cl(
                 clEnqueueReadBuffer(
                     local_devices_[dr].transfer_queue,
@@ -2439,7 +2283,6 @@ inline void exchange_halos_for_field(FieldHandle fh, std::size_t halo) {
             const std::size_t dr = static_cast<std::size_t>(right.local_index);
 
             if (read_left_to_right_ev != nullptr) {
-                detail::check_cl(clFlush(local_devices_[dl].transfer_queue), "clFlush(transfer queue local)");
                 detail::check_cl(
                     clWaitForEvents(1, &read_left_to_right_ev),
                     "clWaitForEvents(halo left->right read ready)"
@@ -2462,11 +2305,9 @@ inline void exchange_halos_for_field(FieldHandle fh, std::size_t halo) {
                     "clEnqueueWriteBuffer(halo left->right local)"
                 );
                 set_field_write_event(fh, dr, write_right_ev);
-                detail::check_cl(clFlush(local_devices_[dr].transfer_queue), "clFlush(transfer queue local)");
             }
 
             if (read_right_to_left_ev != nullptr) {
-                detail::check_cl(clFlush(local_devices_[dr].transfer_queue), "clFlush(transfer queue local)");
                 detail::check_cl(
                     clWaitForEvents(1, &read_right_to_left_ev),
                     "clWaitForEvents(halo right->left read ready)"
@@ -2489,7 +2330,6 @@ inline void exchange_halos_for_field(FieldHandle fh, std::size_t halo) {
                     "clEnqueueWriteBuffer(halo right->left local)"
                 );
                 set_field_write_event(fh, dl, write_left_ev);
-                detail::check_cl(clFlush(local_devices_[dl].transfer_queue), "clFlush(transfer queue local)");
             }
 
             if (write_right_ev != nullptr) {
@@ -2514,8 +2354,6 @@ inline void exchange_halos_for_field(FieldHandle fh, std::size_t halo) {
         }
 
         if (left.owning_rank == rank_ && read_left_to_right_ev != nullptr) {
-            const std::size_t dl = static_cast<std::size_t>(left.local_index);
-            detail::check_cl(clFlush(local_devices_[dl].transfer_queue), "clFlush(transfer queue)");
             detail::check_cl(
                 clWaitForEvents(1, &read_left_to_right_ev),
                 "clWaitForEvents(halo left->right send ready)"
@@ -2525,8 +2363,6 @@ inline void exchange_halos_for_field(FieldHandle fh, std::size_t halo) {
         }
 
         if (right.owning_rank == rank_ && read_right_to_left_ev != nullptr) {
-            const std::size_t dr = static_cast<std::size_t>(right.local_index);
-            detail::check_cl(clFlush(local_devices_[dr].transfer_queue), "clFlush(transfer queue)");
             detail::check_cl(
                 clWaitForEvents(1, &read_right_to_left_ev),
                 "clWaitForEvents(halo right->left send ready)"
@@ -2607,7 +2443,6 @@ inline void exchange_halos_for_field(FieldHandle fh, std::size_t halo) {
                 "clEnqueueWriteBuffer(halo left->right remote)"
             );
             set_field_write_event(fh, dr, write_right_ev);
-            detail::check_cl(clFlush(local_devices_[dr].transfer_queue), "clFlush(transfer queue)");
         }
 
         if (left.owning_rank == rank_) {
@@ -2627,7 +2462,6 @@ inline void exchange_halos_for_field(FieldHandle fh, std::size_t halo) {
                 "clEnqueueWriteBuffer(halo right->left remote)"
             );
             set_field_write_event(fh, dl, write_left_ev);
-            detail::check_cl(clFlush(local_devices_[dl].transfer_queue), "clFlush(transfer queue)");
         }
 
         if (write_right_ev != nullptr) {
@@ -2654,9 +2488,6 @@ inline void redistribute_field_intersection(
     const std::vector<DevicePartition>& old_parts,
     const std::vector<DevicePartition>& new_parts
 ) {
-    if (local_devices_.empty()) {
-        return;
-    }
     std::unordered_map<int, detail::RegisteredField>::iterator fit = fields_.find(fh.value);
     if (fit == fields_.end()) {
         throw Error("redistribute_field_intersection(): unknown field");
@@ -2718,7 +2549,6 @@ inline void redistribute_field_intersection(
                 const std::size_t chunk_off = byte_off + done;
 
                 cl_event read_ev = nullptr;
-                detail::EventGuard read_guard{read_ev};
                 if (rank_src == rank_ && old_parts[src].local_index >= 0) {
                     const std::size_t dsrc =
                         static_cast<std::size_t>(old_parts[src].local_index);
@@ -2743,13 +2573,10 @@ inline void redistribute_field_intersection(
                     );
 
                     detail::check_cl(
-                        clFlush(local_devices_[dsrc].transfer_queue),
-                        "clFlush(redistribute read)"
-                    );
-                    detail::check_cl(
                         clWaitForEvents(1, &read_ev),
                         "clWaitForEvents(redistribute read)"
                     );
+                    clReleaseEvent(read_ev);
                 }
 
                 if (rank_src == rank_ && rank_dst == rank_) {
@@ -2837,7 +2664,7 @@ inline void rebalance(FieldHandle target_field) {
     for (std::size_t i = 0; i < partitions_.size(); ++i) {
         if (partitions_[i].owning_rank == rank_ && partitions_[i].local_index >= 0) {
             const int li = partitions_[i].local_index;
-            if (static_cast<std::size_t>(li) < last_elapsed_local_.size()) {
+            if (li >= 0 && static_cast<std::size_t>(li) < last_elapsed_local_.size()) {
                 local_times[i] = last_elapsed_local_[li];
             }
         }
@@ -2874,14 +2701,16 @@ inline void rebalance(FieldHandle target_field) {
         }
     }
 
-    bool same = true;
-    for (std::size_t i = 0; i < old_parts.size(); ++i) {
-        if (old_parts[i].global_offset != new_parts[i].global_offset ||
-            old_parts[i].element_count != new_parts[i].element_count ||
-            old_parts[i].owning_rank   != new_parts[i].owning_rank ||
-            old_parts[i].local_index   != new_parts[i].local_index) {
-            same = false;
-            break;
+    bool same = (old_parts.size() == new_parts.size());
+    if (same) {
+        for (std::size_t i = 0; i < old_parts.size(); ++i) {
+            if (old_parts[i].global_offset != new_parts[i].global_offset ||
+                old_parts[i].element_count != new_parts[i].element_count ||
+                old_parts[i].owning_rank   != new_parts[i].owning_rank ||
+                old_parts[i].local_index   != new_parts[i].local_index) {
+                same = false;
+                break;
+            }
         }
     }
     if (same) {
@@ -2918,9 +2747,14 @@ inline bool maybe_rebalance_from_timings(
 =======
 static double max_value(const std::vector<double>& values) {
     double out = 0.0;
+<<<<<<< HEAD
     if (!values.empty()) {
         out = *std::max_element(values.begin(), values.end());
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
+=======
+    for (double v : values) {
+        if (v > out) out = v;
+>>>>>>> parent of f0e098a (Comparativo HWTOPOLB (#2))
     }
 
 <<<<<<< HEAD
@@ -2947,9 +2781,6 @@ inline void reset_interval_comm_stats() {
 }
 
 std::vector<double> collect_global_balance_times_from_window() {
-    if (!simulated_times_.empty()) {
-        return simulated_times_;
-    }
     const std::vector<double> measured_elapsed =
         compute_balance_window_elapsed_local();
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
@@ -2962,8 +2793,12 @@ std::vector<double> collect_global_balance_times_from_window() {
             if (li >= 0 && static_cast<std::size_t>(li) < measured_elapsed.size()) {
 =======
 
+<<<<<<< HEAD
             if (static_cast<std::size_t>(li) < measured_elapsed.size()) {
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
+=======
+            if (li >= 0 && static_cast<std::size_t>(li) < measured_elapsed.size()) {
+>>>>>>> parent of f0e098a (Comparativo HWTOPOLB (#2))
                 local_times[i] = measured_elapsed[static_cast<std::size_t>(li)];
             }
         }
@@ -3201,7 +3036,7 @@ void print_balance_interval_metrics(
     accumulated_balance_seconds_ += T_balance_total;
     accumulated_rebalance_apply_seconds_ += T_rebalance_apply;
 
-    if (verbose_metrics_) append_balance_metrics_csv(
+    append_balance_metrics_csv(
         policy_name,
         action,
         reason,
@@ -3215,7 +3050,7 @@ void print_balance_interval_metrics(
         T_rebalance_apply
     );
 
-    if (verbose_metrics_ && rank_ == 0) {
+    if (rank_ == 0) {
         std::cout << "[DCL][balance-metrics] iteration=" << iteration_counter_ << "\n";
         std::cout << "  policy=" << policy_name << "\n";
         std::cout << "  action=" << action << "\n";
@@ -3235,13 +3070,16 @@ void print_balance_interval_metrics(
         }
     }
 
-    if (verbose_metrics_) {
-        print_named_loads("OLD loads", old_loads);
-        if (!proposed_loads.empty()) {
-            print_named_loads("PROPOSED loads", proposed_loads);
-        }
-        print_named_loads("CURRENT loads", current_loads_after);
-        if (rank_ == 0) std::cout << std::flush;
+    print_named_loads("OLD loads", old_loads);
+
+    if (!proposed_loads.empty()) {
+        print_named_loads("PROPOSED loads", proposed_loads);
+    }
+
+    print_named_loads("CURRENT loads", current_loads_after);
+
+    if (rank_ == 0) {
+        std::cout << std::flush;
     }
 
     if (reset_after_print) {
@@ -3252,47 +3090,11 @@ void print_balance_interval_metrics(
 
 inline bool maybe_rebalance_from_timings(
     const std::vector<FieldHandle>& rebalance_fields,
-    const AutoBalancePolicy& policy
+    float threshold
 ) {
-    const float threshold = policy.threshold;
-    const double policy_numa_threshold = policy.numa_cost_gain_ratio_threshold;
     const double balance_t0 = MPI_Wtime();
 
     const std::vector<float> old_loads = current_loads_;
-    const std::vector<FieldHandle> fields_to_move =
-        unique_existing_proportional_fields(rebalance_fields);
-    unsigned long long field_signature = 1469598103934665603ULL;
-    for (FieldHandle field : fields_to_move) {
-        field_signature ^= static_cast<unsigned long long>(field.value);
-        field_signature *= 1099511628211ULL;
-    }
-
-    // Every rank must enter the same collective path, including early exits.
-    // A mixed timing source or field list would otherwise make one rank enter
-    // a reduction while another rank skips directly to metrics or migration.
-    const unsigned long long local_state[6] = {
-        partition_.has_value() ? 1ULL : 0ULL,
-        static_cast<unsigned long long>(partitions_.size()),
-        static_cast<unsigned long long>(simulated_times_.size()),
-        static_cast<unsigned long long>(fields_to_move.size()),
-        static_cast<unsigned long long>(current_loads_.size()),
-        field_signature
-    };
-    unsigned long long minimum_state[6] = {};
-    unsigned long long maximum_state[6] = {};
-    detail::check_mpi(
-        MPI_Allreduce(local_state, minimum_state, 6, MPI_UNSIGNED_LONG_LONG, MPI_MIN, comm_),
-        "MPI_Allreduce(balance input minima)"
-    );
-    detail::check_mpi(
-        MPI_Allreduce(local_state, maximum_state, 6, MPI_UNSIGNED_LONG_LONG, MPI_MAX, comm_),
-        "MPI_Allreduce(balance input maxima)"
-    );
-    for (int i = 0; i < 6; ++i) {
-        if (minimum_state[i] != maximum_state[i]) {
-            throw Error("maybe_rebalance_from_timings(): inconsistent inputs across ranks");
-        }
-    }
 
     if (!partition_.has_value()) {
         const std::vector<double> global_times =
@@ -3332,6 +3134,9 @@ inline bool maybe_rebalance_from_timings(
         return false;
     }
 
+    const std::vector<FieldHandle> fields_to_move =
+        unique_existing_proportional_fields(rebalance_fields);
+
     if (fields_to_move.empty()) {
         const std::vector<double> global_times =
             collect_global_balance_times_from_window();
@@ -3354,49 +3159,12 @@ inline bool maybe_rebalance_from_timings(
     const std::vector<double> global_times =
         collect_global_balance_times_from_window();
 
-    std::vector<float> proposed_loads;
-    if (policy.use_contention_adjustment && topo_metrics_.has_value() &&
-        !topo_metrics_->memory_contention_factor.empty()) {
-        std::vector<double> capacity(global_times.size(), 0.0);
-        double total_capacity = 0.0;
-
-        for (std::size_t i = 0; i < global_times.size(); ++i) {
-            if (partitions_[i].element_count == 0 || global_times[i] <= 1.0e-12) {
-                continue;
-            }
-
-            const double raw_throughput =
-                static_cast<double>(partitions_[i].element_count) / global_times[i];
-            const int dev_idx = (partitions_[i].device_global_index >= 0)
-                ? partitions_[i].device_global_index
-                : static_cast<int>(i);
-
-            capacity[i] = adjusted_capacity(*topo_metrics_, dev_idx, raw_throughput);
-            total_capacity += capacity[i];
-        }
-
-        proposed_loads.resize(global_times.size(), 0.0f);
-        if (total_capacity <= 0.0) {
-            const float step = 1.0f / static_cast<float>(global_times.size());
-            float acc = 0.0f;
-            for (std::size_t i = 0; i < proposed_loads.size(); ++i) {
-                acc += step;
-                proposed_loads[i] = acc;
-            }
-            proposed_loads.back() = 1.0f;
-        } else {
-            double cumulative = 0.0;
-            for (std::size_t i = 0; i < capacity.size(); ++i) {
-                cumulative += capacity[i] / total_capacity;
-                proposed_loads[i] = static_cast<float>(cumulative);
-            }
-            proposed_loads.back() = 1.0f;
-        }
-    } else {
-        proposed_loads = detail::compute_loads_from_partition_throughput(
+    const std::vector<float> proposed_loads =
+        detail::compute_loads_from_partition_throughput(
             global_times,
             partitions_
         );
+<<<<<<< HEAD
     }
 
     int power_cap_error = 0;
@@ -3439,6 +3207,8 @@ inline bool maybe_rebalance_from_timings(
         );
     }
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
+=======
+>>>>>>> parent of f0e098a (Comparativo HWTOPOLB (#2))
 
     if (proposed_loads.empty()) {
         reset_balance_window_events();
@@ -3455,7 +3225,12 @@ inline bool maybe_rebalance_from_timings(
     const std::vector<float> effective_new_loads = loads_from_partitions(new_parts);
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     bool same = (old_parts.size() == new_parts.size());
+=======
+    bool same = (old_parts.size() == new_parts.size());
+
+>>>>>>> parent of f0e098a (Comparativo HWTOPOLB (#2))
     if (same) {
         for (std::size_t i = 0; i < old_parts.size(); ++i) {
             if (old_parts[i].global_offset != new_parts[i].global_offset ||
@@ -3465,6 +3240,7 @@ inline bool maybe_rebalance_from_timings(
                 same = false;
                 break;
             }
+<<<<<<< HEAD
 =======
     bool same = true;
     for (std::size_t i = 0; i < old_parts.size(); ++i) {
@@ -3475,6 +3251,8 @@ inline bool maybe_rebalance_from_timings(
             same = false;
             break;
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
+=======
+>>>>>>> parent of f0e098a (Comparativo HWTOPOLB (#2))
         }
     }
 
@@ -3496,6 +3274,7 @@ inline bool maybe_rebalance_from_timings(
         diff_l2 = std::sqrt(diff_l2);
     }
 
+<<<<<<< HEAD
 <<<<<<< HEAD
     if (diff_l2 < static_cast<double>(threshold)) {
         reset_balance_window_events();
@@ -3638,6 +3417,8 @@ inline bool maybe_rebalance_from_timings(
         return false;
     }
 
+=======
+>>>>>>> parent of f0e098a (Comparativo HWTOPOLB (#2))
     const double apply_t0 = MPI_Wtime();
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
 
@@ -3651,6 +3432,7 @@ inline bool maybe_rebalance_from_timings(
     return true;
 }
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 =======
 inline bool maybe_rebalance_from_timings(
@@ -4148,6 +3930,8 @@ inline bool maybe_rebalance_hierarchical(
     return true;
 }
 
+=======
+>>>>>>> parent of f0e098a (Comparativo HWTOPOLB (#2))
 
 
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
@@ -4309,10 +4093,15 @@ inline bool maybe_rebalance_profiled(const std::vector<FieldHandle>& requested_r
     const std::vector<float> effective_new_loads = loads_from_partitions(new_parts);
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     // ---------------------------------------------------------------------
     // 3. Verifica se mudou algo
     // ---------------------------------------------------------------------
     bool same = (old_parts.size() == new_parts.size());
+=======
+    bool same = (old_parts.size() == new_parts.size());
+
+>>>>>>> parent of f0e098a (Comparativo HWTOPOLB (#2))
     if (same) {
         for (std::size_t i = 0; i < old_parts.size(); ++i) {
             if (old_parts[i].global_offset != new_parts[i].global_offset ||
@@ -4322,6 +4111,7 @@ inline bool maybe_rebalance_profiled(const std::vector<FieldHandle>& requested_r
                 same = false;
                 break;
             }
+<<<<<<< HEAD
 =======
     bool same = true;
     for (std::size_t i = 0; i < old_parts.size(); ++i) {
@@ -4332,6 +4122,8 @@ inline bool maybe_rebalance_profiled(const std::vector<FieldHandle>& requested_r
             same = false;
             break;
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
+=======
+>>>>>>> parent of f0e098a (Comparativo HWTOPOLB (#2))
         }
     }
 
@@ -4448,9 +4240,16 @@ inline bool maybe_rebalance_profiled(const std::vector<FieldHandle>& requested_r
         }
 =======
 
+<<<<<<< HEAD
     if (!rank_recv_bytes.empty()) {
         max_v_migrado = *std::max_element(rank_recv_bytes.begin(), rank_recv_bytes.end());
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
+=======
+    for (std::size_t bytes : rank_recv_bytes) {
+        if (bytes > max_v_migrado) {
+            max_v_migrado = bytes;
+        }
+>>>>>>> parent of f0e098a (Comparativo HWTOPOLB (#2))
     }
 
     // ---------------------------------------------------------------------
@@ -4607,7 +4406,6 @@ inline void transfer_field_range(
             const std::size_t dsrc = static_cast<std::size_t>(src_part.local_index);
 
             cl_event read_ev = nullptr;
-            detail::EventGuard read_guard{read_ev};
             detail::check_cl(
                 clEnqueueReadBuffer(
                     local_devices_[dsrc].transfer_queue,
@@ -4624,13 +4422,10 @@ inline void transfer_field_range(
             );
 
             detail::check_cl(
-                clFlush(local_devices_[dsrc].transfer_queue),
-                "clFlush(transfer_field_range read)"
-            );
-            detail::check_cl(
                 clWaitForEvents(1, &read_ev),
                 "clWaitForEvents(transfer_field_range read)"
             );
+            clReleaseEvent(read_ev);
         }
 
         // Caso remoto: envio unidirecional por chunks
@@ -4651,7 +4446,6 @@ inline void transfer_field_range(
             const std::size_t ddst = static_cast<std::size_t>(dst_part.local_index);
 
             cl_event write_ev = nullptr;
-            detail::EventGuard write_guard{write_ev};
             detail::check_cl(
                 clEnqueueWriteBuffer(
                     local_devices_[ddst].transfer_queue,
@@ -4670,15 +4464,12 @@ inline void transfer_field_range(
             );
 
             detail::check_cl(
-                clFlush(local_devices_[ddst].transfer_queue),
-                "clFlush(transfer_field_range write)"
-            );
-            detail::check_cl(
                 clWaitForEvents(1, &write_ev),
                 src_part.owning_rank == rank_
                     ? "clWaitForEvents(transfer_field_range local)"
                     : "clWaitForEvents(transfer_field_range remote)"
             );
+            clReleaseEvent(write_ev);
         }
     }
 }
@@ -4771,8 +4562,7 @@ inline void redistribute_field_proportional_delta(
 inline void redistribute_selected_registered_fields(
     const std::vector<FieldHandle>& selected_fields,
     const std::vector<DevicePartition>& old_parts,
-    const std::vector<DevicePartition>& new_parts,
-    bool synchronize_ranks = true
+    const std::vector<DevicePartition>& new_parts
 ) {
     const std::vector<FieldHandle> fields_to_move =
         unique_existing_proportional_fields(selected_fields);
@@ -4791,6 +4581,7 @@ inline void redistribute_selected_registered_fields(
             new_parts
         );
 
+<<<<<<< HEAD
         if (synchronize_ranks) {
             detail::check_mpi(
                 MPI_Barrier(comm_),
@@ -4798,6 +4589,12 @@ inline void redistribute_selected_registered_fields(
             );
         }
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
+=======
+        detail::check_mpi(
+            MPI_Barrier(comm_),
+            "MPI_Barrier(redistribute selected proportional field)"
+        );
+>>>>>>> parent of f0e098a (Comparativo HWTOPOLB (#2))
     }
 }
 
@@ -4814,8 +4611,9 @@ inline void redistribute_all_registered_fields(
     }
 =======
 
-    std::transform(fields_.begin(), fields_.end(), std::back_inserter(field_ids),
-                   [](const auto& kv) { return kv.first; });
+    for (const auto& kv : fields_) {
+        field_ids.push_back(kv.first);
+    }
 
 >>>>>>> f0e098a6228df6a2ad9529897d6ae7a0531e5663
     std::sort(field_ids.begin(), field_ids.end());
@@ -4885,187 +4683,10 @@ private:
     std::vector<FieldHandle> last_input_fields_;
     std::vector<FieldHandle> last_output_fields_;
     std::size_t iteration_counter_{0};
-    bool verbose_metrics_{true};
 
     std::vector<ProfileSegment> profiling_data_;
     bool profiling_loaded_{false};
     std::string profiling_file_loaded_;
-
-    std::optional<TopoMetrics> topo_metrics_{std::nullopt};
-    int simulated_total_devices_{-1};
-    double numa_cost_gain_ratio_threshold_{0.50};
-    std::vector<double> simulated_times_;
-
-public:
-    void set_simulated_devices_count(int count) noexcept {
-        simulated_total_devices_ = count;
-        if (all_device_counts_.empty() ||
-            std::accumulate(all_device_counts_.begin(), all_device_counts_.end(), 0) == 0) {
-            if (size_ > 0) {
-                all_device_counts_.assign(static_cast<std::size_t>(size_), count / size_);
-                const int rem = count % size_;
-                for (int i = 0; i < rem; ++i) {
-                    all_device_counts_[static_cast<std::size_t>(i)]++;
-                }
-            } else {
-                all_device_counts_ = {count};
-            }
-        }
-    }
-
-    void set_simulated_ranks_for_testing(int ranks) noexcept {
-        size_ = ranks;
-        all_device_counts_.clear();
-    }
-
-    void set_numa_cost_gain_ratio_threshold(double threshold) noexcept {
-        numa_cost_gain_ratio_threshold_ = threshold;
-    }
-
-    double numa_cost_gain_ratio_threshold() const noexcept {
-        return numa_cost_gain_ratio_threshold_;
-    }
-
-    void set_simulated_times(const std::vector<double>& times) noexcept {
-        simulated_times_ = times;
-    }
-
-    void clear_simulated_times() noexcept {
-        simulated_times_.clear();
-    }
-
-    const std::optional<TopoMetrics>& topo_metrics() const noexcept {
-        return topo_metrics_;
-    }
-
-    void set_topo_metrics(const TopoMetrics& metrics) {
-        std::size_t global_device_count = 0;
-        for (int count : all_device_counts_) {
-            global_device_count += count;
-        }
-
-        std::size_t total_devices = (simulated_total_devices_ >= 0)
-            ? static_cast<std::size_t>(simulated_total_devices_)
-            : global_device_count;
-
-        if (total_devices == 0 && !metrics.pcie_latency_ns.empty()) {
-            total_devices = metrics.pcie_latency_ns.size();
-        }
-
-        const std::size_t expected_matrix_size =
-            static_cast<std::size_t>(size_) * static_cast<std::size_t>(size_);
-        if (metrics.mpi_latency_ns.size() != expected_matrix_size ||
-            metrics.mpi_bandwidth_gbps.size() != expected_matrix_size) {
-            throw dcl::Error("Invalid matrix dimensions");
-        }
-
-        if (!metrics.pcie_latency_ns.empty() && metrics.pcie_latency_ns.size() != total_devices) {
-            throw dcl::Error("Invalid pcie_latency_ns dimensions");
-        }
-        if (!metrics.pcie_bandwidth_gbps.empty() && metrics.pcie_bandwidth_gbps.size() != total_devices) {
-            throw dcl::Error("Invalid pcie_bandwidth_gbps dimensions");
-        }
-        if (!metrics.device_numa_node.empty() && metrics.device_numa_node.size() != total_devices) {
-            throw dcl::Error("Invalid device_numa_node dimensions");
-        }
-        if (!metrics.memory_contention_factor.empty() && metrics.memory_contention_factor.size() != total_devices) {
-            throw dcl::Error("Invalid memory_contention_factor dimensions");
-        }
-        if (!metrics.thermal_tdp_watts.empty() && metrics.thermal_tdp_watts.size() != total_devices) {
-            throw dcl::Error("Invalid thermal_tdp_watts dimensions");
-        }
-        if (!metrics.current_power_watts.empty() && metrics.current_power_watts.size() != total_devices) {
-            throw dcl::Error("Invalid current_power_watts dimensions");
-        }
-        auto require_finite_range = [](const std::vector<double>& values,
-                                       double minimum, bool strict,
-                                       const char* name) {
-            for (double value : values) {
-                if (!std::isfinite(value) ||
-                    (strict ? value <= minimum : value < minimum)) {
-                    throw dcl::Error(std::string("Invalid ") + name + " value");
-                }
-            }
-        };
-        require_finite_range(metrics.pcie_latency_ns, 0.0, false, "pcie_latency_ns");
-        require_finite_range(metrics.pcie_bandwidth_gbps, 0.0, true, "pcie_bandwidth_gbps");
-        require_finite_range(metrics.mpi_latency_ns, 0.0, false, "mpi_latency_ns");
-        require_finite_range(metrics.mpi_bandwidth_gbps, 0.0, false, "mpi_bandwidth_gbps");
-        require_finite_range(metrics.memory_contention_factor, 1.0, false,
-                             "memory_contention_factor");
-        require_finite_range(metrics.thermal_tdp_watts, 0.0, true, "thermal_tdp_watts");
-        require_finite_range(metrics.current_power_watts, 0.0, false,
-                             "current_power_watts");
-        for (int source = 0; source < size_; ++source) {
-            for (int target = 0; target < size_; ++target) {
-                if (source != target &&
-                    metrics.mpi_bandwidth_gbps[static_cast<std::size_t>(source * size_ + target)] <= 0.0) {
-                    throw dcl::Error("Off-diagonal MPI bandwidth must be positive");
-                }
-            }
-        }
-
-        if (std::any_of(metrics.memory_contention_factor.begin(), metrics.memory_contention_factor.end(),
-                        [](double factor) { return factor < 1.0; })) {
-            throw dcl::Error("memory_contention_factor must be >= 1.0");
-        }
-
-        if (!metrics.numa_distance.empty()) {
-            const std::size_t n_dist = metrics.numa_distance.size();
-            const std::size_t num_nodes = static_cast<std::size_t>(std::round(std::sqrt(static_cast<double>(n_dist))));
-            if (num_nodes == 0 || num_nodes * num_nodes != n_dist) {
-                throw dcl::Error("numa_distance must be an N x N matrix");
-            }
-            for (std::size_t i = 0; i < num_nodes; ++i) {
-                const int diag = metrics.numa_distance[i * num_nodes + i];
-                if (diag <= 0) {
-                    throw dcl::Error("numa_distance diagonal entries must be positive integers");
-                }
-                for (std::size_t j = 0; j < num_nodes; ++j) {
-                    const int val = metrics.numa_distance[i * num_nodes + j];
-                    if (val <= 0) {
-                        throw dcl::Error("numa_distance values must be positive integers");
-                    }
-                    if (val < diag) {
-                        throw dcl::Error("numa_distance diagonal must be the minimum distance");
-                    }
-                }
-            }
-        }
-
-        if (!metrics.device_numa_node.empty()) {
-            if (metrics.numa_distance.empty()) {
-                throw dcl::Error("device_numa_node provided without numa_distance matrix");
-            }
-            const std::size_t n_dist = metrics.numa_distance.size();
-            const std::size_t num_nodes = static_cast<std::size_t>(std::round(std::sqrt(static_cast<double>(n_dist))));
-            if (std::any_of(metrics.device_numa_node.begin(), metrics.device_numa_node.end(),
-                            [num_nodes](int node) { return node < 0 || static_cast<std::size_t>(node) >= num_nodes; })) {
-                throw dcl::Error("device_numa_node out of range");
-            }
-        }
-
-        topo_metrics_ = metrics;
-    }
-
-#ifdef __CPPCHECK__
-    static void cppcheck_anchor_unused() {
-        (void)&Impl::reduce_bytes_bor;
-        (void)&Impl::first_field_with_role;
-        (void)&Impl::finalize_kernel_events;
-        (void)&Impl::rebalance;
-        (void)&Impl::redistribute_field_proportional_delta;
-        (void)&Impl::set_simulated_times;
-        (void)&Impl::clear_simulated_times;
-        (void)&Impl::set_numa_cost_gain_ratio_threshold;
-        (void)&Impl::numa_cost_gain_ratio_threshold;
-        (void)(bool (Impl::*)(const std::vector<FieldHandle>&, const AutoBalancePolicy&))&Impl::maybe_rebalance_from_timings;
-        (void)(bool (Impl::*)(const std::vector<FieldHandle>&, float, double, bool, bool, double))&Impl::maybe_rebalance_from_timings;
-        (void)&Impl::maybe_rebalance_hierarchical;
-        (void)&::dcl::erad_loads;
-        (void)&::dcl::hwtopolb_loads;
-    }
-#endif
 };
 
 } // namespace dcl

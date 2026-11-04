@@ -1,0 +1,11 @@
+run_id,total_time_s,metrics_file,timing_file,log_file
+1,35.815818794,Results/np2/dynamic_threshold_threshold_0p1/metrics_run_1.csv,Results/np2/dynamic_threshold_threshold_0p1/total_time_run_1.txt,Results/np2/dynamic_threshold_threshold_0p1/logs/run_1.out
+2,36.594613388,Results/np2/dynamic_threshold_threshold_0p1/metrics_run_2.csv,Results/np2/dynamic_threshold_threshold_0p1/total_time_run_2.txt,Results/np2/dynamic_threshold_threshold_0p1/logs/run_2.out
+3,35.629323573,Results/np2/dynamic_threshold_threshold_0p1/metrics_run_3.csv,Results/np2/dynamic_threshold_threshold_0p1/total_time_run_3.txt,Results/np2/dynamic_threshold_threshold_0p1/logs/run_3.out
+4,36.104368248,Results/np2/dynamic_threshold_threshold_0p1/metrics_run_4.csv,Results/np2/dynamic_threshold_threshold_0p1/total_time_run_4.txt,Results/np2/dynamic_threshold_threshold_0p1/logs/run_4.out
+5,35.589631927,Results/np2/dynamic_threshold_threshold_0p1/metrics_run_5.csv,Results/np2/dynamic_threshold_threshold_0p1/total_time_run_5.txt,Results/np2/dynamic_threshold_threshold_0p1/logs/run_5.out
+6,35.635156349,Results/np2/dynamic_threshold_threshold_0p1/metrics_run_6.csv,Results/np2/dynamic_threshold_threshold_0p1/total_time_run_6.txt,Results/np2/dynamic_threshold_threshold_0p1/logs/run_6.out
+7,35.604743751,Results/np2/dynamic_threshold_threshold_0p1/metrics_run_7.csv,Results/np2/dynamic_threshold_threshold_0p1/total_time_run_7.txt,Results/np2/dynamic_threshold_threshold_0p1/logs/run_7.out
+8,35.658777048,Results/np2/dynamic_threshold_threshold_0p1/metrics_run_8.csv,Results/np2/dynamic_threshold_threshold_0p1/total_time_run_8.txt,Results/np2/dynamic_threshold_threshold_0p1/logs/run_8.out
+9,35.740489023,Results/np2/dynamic_threshold_threshold_0p1/metrics_run_9.csv,Results/np2/dynamic_threshold_threshold_0p1/total_time_run_9.txt,Results/np2/dynamic_threshold_threshold_0p1/logs/run_9.out
+10,35.689056492,Results/np2/dynamic_threshold_threshold_0p1/metrics_run_10.csv,Results/np2/dynamic_threshold_threshold_0p1/total_time_run_10.txt,Results/np2/dynamic_threshold_threshold_0p1/logs/run_10.out

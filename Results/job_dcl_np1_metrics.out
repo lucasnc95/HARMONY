@@ -1,0 +1,69 @@
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-3.localdomain
+Running profiling for NP=1
+
+[rank 0] OpenCL devices found: 2
+  global_device=0 local_device=0 platform="NVIDIA CUDA" device="NVIDIA RTX 2000 Ada Generation"
+  global_device=1 local_device=1 platform="Intel(R) OpenCL" device="Intel(R) Xeon(R) CPU           E5620  @ 2.40GHz"
+
+Global linear device order:
+  global_device=0 rank=0 local_device=0
+  global_device=1 rank=0 local_device=1
+
+Neighbor directions to be measured:
+  0 -> 1
+  1 -> 0
+[local-neighbor] volume=512 rank=0 src_dev=0 dst_dev=1 median=6.991e-05 s
+[local-neighbor] volume=512 rank=0 src_dev=1 dst_dev=0 median=6.3764e-05 s
+[profile] selected volume 512 bytes: worst_neighbor_time=6.991e-05 s
+[local-neighbor] volume=1024 rank=0 src_dev=0 dst_dev=1 median=7.03645e-05 s
+[local-neighbor] volume=1024 rank=0 src_dev=1 dst_dev=0 median=6.5161e-05 s
+[profile] selected volume 1024 bytes: worst_neighbor_time=7.03645e-05 s
+[local-neighbor] volume=1500 rank=0 src_dev=0 dst_dev=1 median=7.1796e-05 s
+[local-neighbor] volume=1500 rank=0 src_dev=1 dst_dev=0 median=6.63135e-05 s
+[profile] selected volume 1500 bytes: worst_neighbor_time=7.1796e-05 s
+[local-neighbor] volume=2048 rank=0 src_dev=0 dst_dev=1 median=7.37865e-05 s
+[local-neighbor] volume=2048 rank=0 src_dev=1 dst_dev=0 median=6.8793e-05 s
+[profile] selected volume 2048 bytes: worst_neighbor_time=7.37865e-05 s
+[local-neighbor] volume=4096 rank=0 src_dev=0 dst_dev=1 median=7.5288e-05 s
+[local-neighbor] volume=4096 rank=0 src_dev=1 dst_dev=0 median=7.1168e-05 s
+[profile] selected volume 4096 bytes: worst_neighbor_time=7.5288e-05 s
+[local-neighbor] volume=8192 rank=0 src_dev=0 dst_dev=1 median=8.39835e-05 s
+[local-neighbor] volume=8192 rank=0 src_dev=1 dst_dev=0 median=7.8222e-05 s
+[profile] selected volume 8192 bytes: worst_neighbor_time=8.39835e-05 s
+[local-neighbor] volume=16384 rank=0 src_dev=0 dst_dev=1 median=9.27135e-05 s
+[local-neighbor] volume=16384 rank=0 src_dev=1 dst_dev=0 median=8.4857e-05 s
+[profile] selected volume 16384 bytes: worst_neighbor_time=9.27135e-05 s
+[local-neighbor] volume=32768 rank=0 src_dev=0 dst_dev=1 median=0.000115377 s
+[local-neighbor] volume=32768 rank=0 src_dev=1 dst_dev=0 median=0.000106717 s
+[profile] selected volume 32768 bytes: worst_neighbor_time=0.000115377 s
+[local-neighbor] volume=65536 rank=0 src_dev=0 dst_dev=1 median=0.000142685 s
+[local-neighbor] volume=65536 rank=0 src_dev=1 dst_dev=0 median=0.000135072 s
+[profile] selected volume 65536 bytes: worst_neighbor_time=0.000142685 s
+[local-neighbor] volume=131072 rank=0 src_dev=0 dst_dev=1 median=0.000209837 s
+[local-neighbor] volume=131072 rank=0 src_dev=1 dst_dev=0 median=0.000192027 s
+[profile] selected volume 131072 bytes: worst_neighbor_time=0.000209837 s
+[local-neighbor] volume=262144 rank=0 src_dev=0 dst_dev=1 median=0.00028942 s
+[local-neighbor] volume=262144 rank=0 src_dev=1 dst_dev=0 median=0.000282576 s
+[profile] selected volume 262144 bytes: worst_neighbor_time=0.00028942 s
+[local-neighbor] volume=524288 rank=0 src_dev=0 dst_dev=1 median=0.000446561 s
+[local-neighbor] volume=524288 rank=0 src_dev=1 dst_dev=0 median=0.00047338 s
+[profile] selected volume 524288 bytes: worst_neighbor_time=0.00047338 s
+[local-neighbor] volume=1048576 rank=0 src_dev=0 dst_dev=1 median=0.000792098 s
+[local-neighbor] volume=1048576 rank=0 src_dev=1 dst_dev=0 median=0.000835853 s
+[profile] selected volume 1048576 bytes: worst_neighbor_time=0.000835853 s
+[local-neighbor] volume=4194304 rank=0 src_dev=0 dst_dev=1 median=0.00213821 s
+[local-neighbor] volume=4194304 rank=0 src_dev=1 dst_dev=0 median=0.00214135 s
+[profile] selected volume 4194304 bytes: worst_neighbor_time=0.00214135 s
+[local-neighbor] volume=16777216 rank=0 src_dev=0 dst_dev=1 median=0.00746027 s
+[local-neighbor] volume=16777216 rank=0 src_dev=1 dst_dev=0 median=0.00813308 s
+[profile] selected volume 16777216 bytes: worst_neighbor_time=0.00813308 s
+
+Profiling completed. Linear segments saved to Results/np1/profiling/profiling_np1.txt

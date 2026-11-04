@@ -1,0 +1,11 @@
+run_id,total_time_s,metrics_file,timing_file,log_file
+1,35.712439927,Results/np2/static_threshold_threshold_0p01/metrics_run_1.csv,Results/np2/static_threshold_threshold_0p01/total_time_run_1.txt,Results/np2/static_threshold_threshold_0p01/logs/run_1.out
+2,35.757187707,Results/np2/static_threshold_threshold_0p01/metrics_run_2.csv,Results/np2/static_threshold_threshold_0p01/total_time_run_2.txt,Results/np2/static_threshold_threshold_0p01/logs/run_2.out
+3,35.619971423,Results/np2/static_threshold_threshold_0p01/metrics_run_3.csv,Results/np2/static_threshold_threshold_0p01/total_time_run_3.txt,Results/np2/static_threshold_threshold_0p01/logs/run_3.out
+4,35.596156614,Results/np2/static_threshold_threshold_0p01/metrics_run_4.csv,Results/np2/static_threshold_threshold_0p01/total_time_run_4.txt,Results/np2/static_threshold_threshold_0p01/logs/run_4.out
+5,36.198183562,Results/np2/static_threshold_threshold_0p01/metrics_run_5.csv,Results/np2/static_threshold_threshold_0p01/total_time_run_5.txt,Results/np2/static_threshold_threshold_0p01/logs/run_5.out
+6,35.676338174,Results/np2/static_threshold_threshold_0p01/metrics_run_6.csv,Results/np2/static_threshold_threshold_0p01/total_time_run_6.txt,Results/np2/static_threshold_threshold_0p01/logs/run_6.out
+7,35.746392294,Results/np2/static_threshold_threshold_0p01/metrics_run_7.csv,Results/np2/static_threshold_threshold_0p01/total_time_run_7.txt,Results/np2/static_threshold_threshold_0p01/logs/run_7.out
+8,35.598225611,Results/np2/static_threshold_threshold_0p01/metrics_run_8.csv,Results/np2/static_threshold_threshold_0p01/total_time_run_8.txt,Results/np2/static_threshold_threshold_0p01/logs/run_8.out
+9,35.898671972,Results/np2/static_threshold_threshold_0p01/metrics_run_9.csv,Results/np2/static_threshold_threshold_0p01/total_time_run_9.txt,Results/np2/static_threshold_threshold_0p01/logs/run_9.out
+10,35.695417364,Results/np2/static_threshold_threshold_0p01/metrics_run_10.csv,Results/np2/static_threshold_threshold_0p01/total_time_run_10.txt,Results/np2/static_threshold_threshold_0p01/logs/run_10.out

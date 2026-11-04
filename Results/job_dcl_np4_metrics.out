@@ -1,0 +1,306 @@
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-3.localdomain
+compute-3-4.localdomain
+compute-3-4.localdomain
+compute-3-4.localdomain
+compute-3-4.localdomain
+compute-3-4.localdomain
+compute-3-4.localdomain
+compute-3-4.localdomain
+compute-3-4.localdomain
+compute-3-6.localdomain
+compute-3-6.localdomain
+compute-3-6.localdomain
+compute-3-6.localdomain
+compute-3-6.localdomain
+compute-3-6.localdomain
+compute-3-6.localdomain
+compute-3-6.localdomain
+compute-3-7.localdomain
+compute-3-7.localdomain
+compute-3-7.localdomain
+compute-3-7.localdomain
+compute-3-7.localdomain
+compute-3-7.localdomain
+compute-3-7.localdomain
+compute-3-7.localdomain
+compute-3-3.localdomain
+compute-3-4.localdomain
+compute-3-6.localdomain
+compute-3-7.localdomain
+Running profiling for NP=4
+
+[rank 0] OpenCL devices found: 2
+  global_device=0 local_device=0 platform="NVIDIA CUDA" device="NVIDIA RTX 2000 Ada Generation"
+  global_device=1 local_device=1 platform="Intel(R) OpenCL" device="Intel(R) Xeon(R) CPU           E5620  @ 2.40GHz"
+
+[rank 1] OpenCL devices found: 2
+  global_device=2 local_device=0 platform="NVIDIA CUDA" device="NVIDIA RTX 2000 Ada Generation"
+  global_device=3 local_device=1 platform="Intel(R) OpenCL" device="Intel(R) Xeon(R) CPU           E5620  @ 2.40GHz"
+
+[rank 2] OpenCL devices found: 2
+  global_device=4 local_device=0 platform="NVIDIA CUDA" device="NVIDIA RTX 2000 Ada Generation"
+  global_device=5 local_device=1 platform="Intel(R) OpenCL" device="Intel(R) Xeon(R) CPU           E5620  @ 2.40GHz"
+
+[rank 3] OpenCL devices found: 2
+  global_device=6 local_device=0 platform="NVIDIA CUDA" device="NVIDIA RTX 2000 Ada Generation"
+  global_device=7 local_device=1 platform="Intel(R) OpenCL" device="Intel(R) Xeon(R) CPU           E5620  @ 2.40GHz"
+
+Global linear device order:
+  global_device=0 rank=0 local_device=0
+  global_device=1 rank=0 local_device=1
+  global_device=2 rank=1 local_device=0
+  global_device=3 rank=1 local_device=1
+  global_device=4 rank=2 local_device=0
+  global_device=5 rank=2 local_device=1
+  global_device=6 rank=3 local_device=0
+  global_device=7 rank=3 local_device=1
+
+Neighbor directions to be measured:
+  0 -> 1
+  1 -> 0
+  1 -> 2
+  2 -> 1
+  2 -> 3
+  3 -> 2
+  3 -> 4
+  4 -> 3
+  4 -> 5
+  5 -> 4
+  5 -> 6
+  6 -> 5
+  6 -> 7
+  7 -> 6
+[local-neighbor] volume=512 rank=0 src_dev=0 dst_dev=1 median=7.00155e-05 s
+[local-neighbor] volume=512 rank=0 src_dev=1 dst_dev=0 median=6.43235e-05 s
+[mpi-neighbor] volume=512 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=4.52915e-05 s
+[mpi-neighbor] volume=512 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=1.4178e-05 s
+[local-neighbor] volume=512 rank=1 src_dev=0 dst_dev=1 median=7.026e-05 s
+[local-neighbor] volume=512 rank=1 src_dev=1 dst_dev=0 median=6.4324e-05 s
+[mpi-neighbor] volume=512 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=4.5886e-05 s
+[mpi-neighbor] volume=512 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=1.3898e-05 s
+[local-neighbor] volume=512 rank=2 src_dev=0 dst_dev=1 median=6.98055e-05 s
+[local-neighbor] volume=512 rank=2 src_dev=1 dst_dev=0 median=6.3835e-05 s
+[mpi-neighbor] volume=512 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=4.6095e-05 s
+[mpi-neighbor] volume=512 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=1.3968e-05 s
+[local-neighbor] volume=512 rank=3 src_dev=0 dst_dev=1 median=7.012e-05 s
+[local-neighbor] volume=512 rank=3 src_dev=1 dst_dev=0 median=6.39735e-05 s
+[profile] selected volume 512 bytes: worst_neighbor_time=7.026e-05 s
+[local-neighbor] volume=1024 rank=0 src_dev=0 dst_dev=1 median=7.02945e-05 s
+[local-neighbor] volume=1024 rank=0 src_dev=1 dst_dev=0 median=6.4952e-05 s
+[mpi-neighbor] volume=1024 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=4.5815e-05 s
+[mpi-neighbor] volume=1024 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=1.4946e-05 s
+[local-neighbor] volume=1024 rank=1 src_dev=0 dst_dev=1 median=7.0679e-05 s
+[local-neighbor] volume=1024 rank=1 src_dev=1 dst_dev=0 median=6.4882e-05 s
+[mpi-neighbor] volume=1024 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=4.6235e-05 s
+[mpi-neighbor] volume=1024 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=1.4527e-05 s
+[local-neighbor] volume=1024 rank=2 src_dev=0 dst_dev=1 median=7.0539e-05 s
+[local-neighbor] volume=1024 rank=2 src_dev=1 dst_dev=0 median=6.47775e-05 s
+[mpi-neighbor] volume=1024 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=4.63395e-05 s
+[mpi-neighbor] volume=1024 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=1.4248e-05 s
+[local-neighbor] volume=1024 rank=3 src_dev=0 dst_dev=1 median=7.05735e-05 s
+[local-neighbor] volume=1024 rank=3 src_dev=1 dst_dev=0 median=6.4742e-05 s
+[profile] selected volume 1024 bytes: worst_neighbor_time=7.0679e-05 s
+[local-neighbor] volume=1500 rank=0 src_dev=0 dst_dev=1 median=7.2425e-05 s
+[local-neighbor] volume=1500 rank=0 src_dev=1 dst_dev=0 median=6.7012e-05 s
+[mpi-neighbor] volume=1500 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=0.000413702 s
+[mpi-neighbor] volume=1500 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=0.000226495 s
+[local-neighbor] volume=1500 rank=1 src_dev=0 dst_dev=1 median=7.2635e-05 s
+[local-neighbor] volume=1500 rank=1 src_dev=1 dst_dev=0 median=6.77465e-05 s
+[mpi-neighbor] volume=1500 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=0.000283975 s
+[mpi-neighbor] volume=1500 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=0.000234211 s
+[local-neighbor] volume=1500 rank=2 src_dev=0 dst_dev=1 median=7.19005e-05 s
+[local-neighbor] volume=1500 rank=2 src_dev=1 dst_dev=0 median=6.6628e-05 s
+[mpi-neighbor] volume=1500 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=0.000272762 s
+[mpi-neighbor] volume=1500 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=0.000185775 s
+[local-neighbor] volume=1500 rank=3 src_dev=0 dst_dev=1 median=6.9561e-05 s
+[local-neighbor] volume=1500 rank=3 src_dev=1 dst_dev=0 median=6.4707e-05 s
+[profile] selected volume 1500 bytes: worst_neighbor_time=0.000413702 s
+[local-neighbor] volume=2048 rank=0 src_dev=0 dst_dev=1 median=7.1796e-05 s
+[local-neighbor] volume=2048 rank=0 src_dev=1 dst_dev=0 median=6.8305e-05 s
+[mpi-neighbor] volume=2048 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=0.000398826 s
+[mpi-neighbor] volume=2048 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=0.000239207 s
+[local-neighbor] volume=2048 rank=1 src_dev=0 dst_dev=1 median=7.4241e-05 s
+[local-neighbor] volume=2048 rank=1 src_dev=1 dst_dev=0 median=6.91425e-05 s
+[mpi-neighbor] volume=2048 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=0.000277445 s
+[mpi-neighbor] volume=2048 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=0.000354126 s
+[local-neighbor] volume=2048 rank=2 src_dev=0 dst_dev=1 median=7.1307e-05 s
+[local-neighbor] volume=2048 rank=2 src_dev=1 dst_dev=0 median=6.66625e-05 s
+[mpi-neighbor] volume=2048 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=0.000263473 s
+[mpi-neighbor] volume=2048 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=0.000352938 s
+[local-neighbor] volume=2048 rank=3 src_dev=0 dst_dev=1 median=7.18655e-05 s
+[local-neighbor] volume=2048 rank=3 src_dev=1 dst_dev=0 median=6.6767e-05 s
+[profile] selected volume 2048 bytes: worst_neighbor_time=0.000398826 s
+[local-neighbor] volume=4096 rank=0 src_dev=0 dst_dev=1 median=7.4171e-05 s
+[local-neighbor] volume=4096 rank=0 src_dev=1 dst_dev=0 median=7.026e-05 s
+[mpi-neighbor] volume=4096 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=0.0003704 s
+[mpi-neighbor] volume=4096 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=0.000357064 s
+[local-neighbor] volume=4096 rank=1 src_dev=0 dst_dev=1 median=7.466e-05 s
+[local-neighbor] volume=4096 rank=1 src_dev=1 dst_dev=0 median=6.9283e-05 s
+[mpi-neighbor] volume=4096 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=0.000350569 s
+[mpi-neighbor] volume=4096 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=0.000372354 s
+[local-neighbor] volume=4096 rank=2 src_dev=0 dst_dev=1 median=7.3822e-05 s
+[local-neighbor] volume=4096 rank=2 src_dev=1 dst_dev=0 median=6.9212e-05 s
+[mpi-neighbor] volume=4096 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=0.00035699 s
+[mpi-neighbor] volume=4096 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=0.000363379 s
+[local-neighbor] volume=4096 rank=3 src_dev=0 dst_dev=1 median=7.3751e-05 s
+[local-neighbor] volume=4096 rank=3 src_dev=1 dst_dev=0 median=6.9387e-05 s
+[profile] selected volume 4096 bytes: worst_neighbor_time=0.000372354 s
+[local-neighbor] volume=8192 rank=0 src_dev=0 dst_dev=1 median=8.1295e-05 s
+[local-neighbor] volume=8192 rank=0 src_dev=1 dst_dev=0 median=7.672e-05 s
+[mpi-neighbor] volume=8192 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=0.00040787 s
+[mpi-neighbor] volume=8192 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=0.00039387 s
+[local-neighbor] volume=8192 rank=1 src_dev=0 dst_dev=1 median=8.46825e-05 s
+[local-neighbor] volume=8192 rank=1 src_dev=1 dst_dev=0 median=7.94445e-05 s
+[mpi-neighbor] volume=8192 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=0.000357762 s
+[mpi-neighbor] volume=8192 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=0.000388243 s
+[local-neighbor] volume=8192 rank=2 src_dev=0 dst_dev=1 median=8.06655e-05 s
+[local-neighbor] volume=8192 rank=2 src_dev=1 dst_dev=0 median=7.61265e-05 s
+[mpi-neighbor] volume=8192 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=0.000360168 s
+[mpi-neighbor] volume=8192 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=0.000373506 s
+[local-neighbor] volume=8192 rank=3 src_dev=0 dst_dev=1 median=8.0596e-05 s
+[local-neighbor] volume=8192 rank=3 src_dev=1 dst_dev=0 median=7.63355e-05 s
+[profile] selected volume 8192 bytes: worst_neighbor_time=0.00040787 s
+[local-neighbor] volume=16384 rank=0 src_dev=0 dst_dev=1 median=8.8244e-05 s
+[local-neighbor] volume=16384 rank=0 src_dev=1 dst_dev=0 median=8.3948e-05 s
+[mpi-neighbor] volume=16384 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=0.000471285 s
+[mpi-neighbor] volume=16384 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=0.000441781 s
+[local-neighbor] volume=16384 rank=1 src_dev=0 dst_dev=1 median=9.3063e-05 s
+[local-neighbor] volume=16384 rank=1 src_dev=1 dst_dev=0 median=8.9117e-05 s
+[mpi-neighbor] volume=16384 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=0.000428407 s
+[mpi-neighbor] volume=16384 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=0.00046416 s
+[local-neighbor] volume=16384 rank=2 src_dev=0 dst_dev=1 median=8.8488e-05 s
+[local-neighbor] volume=16384 rank=2 src_dev=1 dst_dev=0 median=8.31455e-05 s
+[mpi-neighbor] volume=16384 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=0.000420231 s
+[mpi-neighbor] volume=16384 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=0.000415131 s
+[local-neighbor] volume=16384 rank=3 src_dev=0 dst_dev=1 median=8.9885e-05 s
+[local-neighbor] volume=16384 rank=3 src_dev=1 dst_dev=0 median=8.531e-05 s
+[profile] selected volume 16384 bytes: worst_neighbor_time=0.000471285 s
+[local-neighbor] volume=32768 rank=0 src_dev=0 dst_dev=1 median=0.000107694 s
+[local-neighbor] volume=32768 rank=0 src_dev=1 dst_dev=0 median=0.000104726 s
+[mpi-neighbor] volume=32768 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=0.000562567 s
+[mpi-neighbor] volume=32768 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=0.000589006 s
+[local-neighbor] volume=32768 rank=1 src_dev=0 dst_dev=1 median=0.000117438 s
+[local-neighbor] volume=32768 rank=1 src_dev=1 dst_dev=0 median=0.000113807 s
+[mpi-neighbor] volume=32768 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=0.000513508 s
+[mpi-neighbor] volume=32768 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=0.000619379 s
+[local-neighbor] volume=32768 rank=2 src_dev=0 dst_dev=1 median=0.000108532 s
+[local-neighbor] volume=32768 rank=2 src_dev=1 dst_dev=0 median=0.000103363 s
+[mpi-neighbor] volume=32768 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=0.000522755 s
+[mpi-neighbor] volume=32768 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=0.000609148 s
+[local-neighbor] volume=32768 rank=3 src_dev=0 dst_dev=1 median=0.000107554 s
+[local-neighbor] volume=32768 rank=3 src_dev=1 dst_dev=0 median=0.000104341 s
+[profile] selected volume 32768 bytes: worst_neighbor_time=0.000619379 s
+[local-neighbor] volume=65536 rank=0 src_dev=0 dst_dev=1 median=0.000128402 s
+[local-neighbor] volume=65536 rank=0 src_dev=1 dst_dev=0 median=0.000132348 s
+[mpi-neighbor] volume=65536 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=0.000998619 s
+[mpi-neighbor] volume=65536 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=0.000972085 s
+[local-neighbor] volume=65536 rank=1 src_dev=0 dst_dev=1 median=0.000148553 s
+[local-neighbor] volume=65536 rank=1 src_dev=1 dst_dev=0 median=0.000151835 s
+[mpi-neighbor] volume=65536 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=0.00101451 s
+[mpi-neighbor] volume=65536 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=0.000967218 s
+[local-neighbor] volume=65536 rank=2 src_dev=0 dst_dev=1 median=0.000131649 s
+[local-neighbor] volume=65536 rank=2 src_dev=1 dst_dev=0 median=0.000131824 s
+[mpi-neighbor] volume=65536 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=0.00100863 s
+[mpi-neighbor] volume=65536 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=0.000974239 s
+[local-neighbor] volume=65536 rank=3 src_dev=0 dst_dev=1 median=0.000128541 s
+[local-neighbor] volume=65536 rank=3 src_dev=1 dst_dev=0 median=0.000131789 s
+[profile] selected volume 65536 bytes: worst_neighbor_time=0.00101451 s
+[local-neighbor] volume=131072 rank=0 src_dev=0 dst_dev=1 median=0.00017984 s
+[local-neighbor] volume=131072 rank=0 src_dev=1 dst_dev=0 median=0.000187522 s
+[mpi-neighbor] volume=131072 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=0.00221242 s
+[mpi-neighbor] volume=131072 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=0.00206077 s
+[local-neighbor] volume=131072 rank=1 src_dev=0 dst_dev=1 median=0.000223283 s
+[local-neighbor] volume=131072 rank=1 src_dev=1 dst_dev=0 median=0.000230197 s
+[mpi-neighbor] volume=131072 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=0.00215446 s
+[mpi-neighbor] volume=131072 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=0.00208644 s
+[local-neighbor] volume=131072 rank=2 src_dev=0 dst_dev=1 median=0.000186962 s
+[local-neighbor] volume=131072 rank=2 src_dev=1 dst_dev=0 median=0.000186962 s
+[mpi-neighbor] volume=131072 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=0.00222682 s
+[mpi-neighbor] volume=131072 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=0.00198322 s
+[local-neighbor] volume=131072 rank=3 src_dev=0 dst_dev=1 median=0.000179664 s
+[local-neighbor] volume=131072 rank=3 src_dev=1 dst_dev=0 median=0.000188709 s
+[profile] selected volume 131072 bytes: worst_neighbor_time=0.00222682 s
+[local-neighbor] volume=262144 rank=0 src_dev=0 dst_dev=1 median=0.000265884 s
+[local-neighbor] volume=262144 rank=0 src_dev=1 dst_dev=0 median=0.000278525 s
+[mpi-neighbor] volume=262144 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=0.00381474 s
+[mpi-neighbor] volume=262144 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=0.00375152 s
+[local-neighbor] volume=262144 rank=1 src_dev=0 dst_dev=1 median=0.000345749 s
+[local-neighbor] volume=262144 rank=1 src_dev=1 dst_dev=0 median=0.000357901 s
+[mpi-neighbor] volume=262144 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=0.00387786 s
+[mpi-neighbor] volume=262144 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=0.00373576 s
+[local-neighbor] volume=262144 rank=2 src_dev=0 dst_dev=1 median=0.000275904 s
+[local-neighbor] volume=262144 rank=2 src_dev=1 dst_dev=0 median=0.000277406 s
+[mpi-neighbor] volume=262144 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=0.00384178 s
+[mpi-neighbor] volume=262144 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=0.00375528 s
+[local-neighbor] volume=262144 rank=3 src_dev=0 dst_dev=1 median=0.000267768 s
+[local-neighbor] volume=262144 rank=3 src_dev=1 dst_dev=0 median=0.000279746 s
+[profile] selected volume 262144 bytes: worst_neighbor_time=0.00387786 s
+[local-neighbor] volume=524288 rank=0 src_dev=0 dst_dev=1 median=0.000461753 s
+[local-neighbor] volume=524288 rank=0 src_dev=1 dst_dev=0 median=0.000464616 s
+[mpi-neighbor] volume=524288 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=0.00892443 s
+[mpi-neighbor] volume=524288 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=0.00725356 s
+[local-neighbor] volume=524288 rank=1 src_dev=0 dst_dev=1 median=0.00061998 s
+[local-neighbor] volume=524288 rank=1 src_dev=1 dst_dev=0 median=0.00062162 s
+[mpi-neighbor] volume=524288 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=0.00796374 s
+[mpi-neighbor] volume=524288 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=0.00726167 s
+[local-neighbor] volume=524288 rank=2 src_dev=0 dst_dev=1 median=0.000440973 s
+[local-neighbor] volume=524288 rank=2 src_dev=1 dst_dev=0 median=0.000466255 s
+[mpi-neighbor] volume=524288 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=0.00744283 s
+[mpi-neighbor] volume=524288 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=0.00732427 s
+[local-neighbor] volume=524288 rank=3 src_dev=0 dst_dev=1 median=0.000463357 s
+[local-neighbor] volume=524288 rank=3 src_dev=1 dst_dev=0 median=0.000465731 s
+[profile] selected volume 524288 bytes: worst_neighbor_time=0.00892443 s
+[local-neighbor] volume=1048576 rank=0 src_dev=0 dst_dev=1 median=0.000825239 s
+[local-neighbor] volume=1048576 rank=0 src_dev=1 dst_dev=0 median=0.000821886 s
+[mpi-neighbor] volume=1048576 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=0.0192493 s
+[mpi-neighbor] volume=1048576 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=0.0147713 s
+[local-neighbor] volume=1048576 rank=1 src_dev=0 dst_dev=1 median=0.00113914 s
+[local-neighbor] volume=1048576 rank=1 src_dev=1 dst_dev=0 median=0.00113338 s
+[mpi-neighbor] volume=1048576 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=0.0163981 s
+[mpi-neighbor] volume=1048576 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=0.0150003 s
+[local-neighbor] volume=1048576 rank=2 src_dev=0 dst_dev=1 median=0.000784553 s
+[local-neighbor] volume=1048576 rank=2 src_dev=1 dst_dev=0 median=0.000825968 s
+[mpi-neighbor] volume=1048576 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=0.017213 s
+[mpi-neighbor] volume=1048576 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=0.0150445 s
+[local-neighbor] volume=1048576 rank=3 src_dev=0 dst_dev=1 median=0.000826526 s
+[local-neighbor] volume=1048576 rank=3 src_dev=1 dst_dev=0 median=0.000825444 s
+[profile] selected volume 1048576 bytes: worst_neighbor_time=0.0192493 s
+[local-neighbor] volume=4194304 rank=0 src_dev=0 dst_dev=1 median=0.00213591 s
+[local-neighbor] volume=4194304 rank=0 src_dev=1 dst_dev=0 median=0.00211792 s
+[mpi-neighbor] volume=4194304 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=0.0729644 s
+[mpi-neighbor] volume=4194304 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=0.0604422 s
+[local-neighbor] volume=4194304 rank=1 src_dev=0 dst_dev=1 median=0.0032832 s
+[local-neighbor] volume=4194304 rank=1 src_dev=1 dst_dev=0 median=0.00330974 s
+[mpi-neighbor] volume=4194304 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=0.065104 s
+[mpi-neighbor] volume=4194304 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=0.0628104 s
+[local-neighbor] volume=4194304 rank=2 src_dev=0 dst_dev=1 median=0.00200453 s
+[local-neighbor] volume=4194304 rank=2 src_dev=1 dst_dev=0 median=0.00213995 s
+[mpi-neighbor] volume=4194304 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=0.0688132 s
+[mpi-neighbor] volume=4194304 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=0.0636899 s
+[local-neighbor] volume=4194304 rank=3 src_dev=0 dst_dev=1 median=0.00213355 s
+[local-neighbor] volume=4194304 rank=3 src_dev=1 dst_dev=0 median=0.00213055 s
+[profile] selected volume 4194304 bytes: worst_neighbor_time=0.0729644 s
+[local-neighbor] volume=16777216 rank=0 src_dev=0 dst_dev=1 median=0.00733992 s
+[local-neighbor] volume=16777216 rank=0 src_dev=1 dst_dev=0 median=0.00801004 s
+[mpi-neighbor] volume=16777216 src_global=1(rank=0,dev=1) dst_global=2(rank=1,dev=0) median=0.303695 s
+[mpi-neighbor] volume=16777216 src_global=2(rank=1,dev=0) dst_global=1(rank=0,dev=1) median=0.240555 s
+[local-neighbor] volume=16777216 rank=1 src_dev=0 dst_dev=1 median=0.0122277 s
+[local-neighbor] volume=16777216 rank=1 src_dev=1 dst_dev=0 median=0.0127066 s
+[mpi-neighbor] volume=16777216 src_global=3(rank=1,dev=1) dst_global=4(rank=2,dev=0) median=0.254104 s
+[mpi-neighbor] volume=16777216 src_global=4(rank=2,dev=0) dst_global=3(rank=1,dev=1) median=0.246832 s
+[local-neighbor] volume=16777216 rank=2 src_dev=0 dst_dev=1 median=0.00743676 s
+[local-neighbor] volume=16777216 rank=2 src_dev=1 dst_dev=0 median=0.00796877 s
+[mpi-neighbor] volume=16777216 src_global=5(rank=2,dev=1) dst_global=6(rank=3,dev=0) median=0.272914 s
+[mpi-neighbor] volume=16777216 src_global=6(rank=3,dev=0) dst_global=5(rank=2,dev=1) median=0.275838 s
+[local-neighbor] volume=16777216 rank=3 src_dev=0 dst_dev=1 median=0.00735088 s
+[local-neighbor] volume=16777216 rank=3 src_dev=1 dst_dev=0 median=0.00796104 s
+[profile] selected volume 16777216 bytes: worst_neighbor_time=0.303695 s
+
+Profiling completed. Linear segments saved to Results/np4/profiling/profiling_np4.txt
