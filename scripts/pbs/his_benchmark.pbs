@@ -1,0 +1,134 @@
+#!/bin/bash
+#----------------------------------------------------------------------------
+# HIS benchmark: every balancing policy (static/dynamic x profiled/threshold),
+# 10 runs each, with mean and standard deviation of the execution time.
+#
+# Ranks are started with OpenHPC's prun, one per line of the PBS node file.
+# Ask for one MPI process per node with mpiprocs=1 (submit from the repository root):
+#
+#   qsub -l select=2:ncpus=16:mpiprocs=1 scripts/pbs/his_benchmark.pbs
+#   qsub -l select=1:host=compute-3-3:ncpus=16:mpiprocs=1+1:host=compute-3-4:ncpus=16:mpiprocs=1 \
+#        scripts/pbs/his_benchmark.pbs
+#
+# Variables that can be overridden with -v: X, Y, Z,
+# ITERATIONS, THRESHOLDS, SCHEDULES, RUNS, HALO_SYNC (overlap | local | global),
+# PRECISION (float | double),
+# WARMUPS (iterations before the first attempt, e.g. "0 2000"; 0 = the interval).
+#
+# MODULES, LAUNCHER and HARMONY_ROOT: see scripts/pbs/job_env.sh.
+# Build first: ./build.sh && ./examples/his/build.sh
+#
+# Each run's log (results/np<NP>/.../logs) ends with the HARMONY timing report.
+#----------------------------------------------------------------------------
+#PBS -N HARMONY_HIS
+#PBS -j oe
+#PBS -l walltime=14:30:00
+#PBS -l select=2:ncpus=16:mpiprocs=1
+
+set -euo pipefail
+# shellcheck disable=SC1091
+source "${HARMONY_ROOT:-${PBS_O_WORKDIR:-$(pwd)}}/scripts/pbs/job_env.sh"
+
+X=${X:-50}
+Y=${Y:-50}
+Z=${Z:-6400}
+ITERATIONS=${ITERATIONS:-"10000 100000"}
+THRESHOLDS=${THRESHOLDS:-"0.00015625 0.0003125 0.00046875"}
+SCHEDULES=${SCHEDULES:-"static dynamic"}
+RUNS=${RUNS:-10}
+WARMUPS=${WARMUPS:-"0"}
+HALO_SYNC=${HALO_SYNC:-overlap}
+PRECISION=${PRECISION:-float}
+
+HIS="$HARMONY_ROOT/examples/his/bin/his"
+PROFILER="$HARMONY_ROOT/bin/migration_profiler"
+
+OUT="results/np${NP}"
+mkdir -p "$OUT/profiling" "$OUT/summary"
+
+
+PROFILE_FILE="$OUT/profiling/profiling_np${NP}.txt"
+RESULT_FILE="$OUT/summary/results_np${NP}.txt"
+SUMMARY_ROWS="$OUT/summary/.rows_np${NP}.tmp"
+
+intervals_for_iterations() {
+    case "$1" in
+        10000)  echo "100 1000" ;;
+        100000) echo "1000 10000" ;;
+        *)      echo "1000" ;;
+    esac
+}
+
+# Prints "<mean> <stddev>" of the numbers in a file (one per line).
+mean_stddev() {
+    awk '{ s += $1; sq += $1 * $1; n++ }
+         END { if (n > 0) { m = s / n; v = sq / n - m * m; if (v < 0) v = 0; printf "%.4f %.4f", m, sqrt(v) } }' "$1"
+}
+
+# run_case <label> <dir> <extra his args...>
+run_case() {
+    local label=$1 dir=$2
+    shift 2
+    mkdir -p "$dir/logs"
+    local timing="$dir/timings.txt"
+    : > "$timing"
+
+    echo "" >> "$RESULT_FILE"
+    echo "[$label]" >> "$RESULT_FILE"
+    for run in $(seq 1 "$RUNS"); do
+        if run_mpi "$HIS" \
+            --x "$X" --y "$Y" --z "$Z" --gather-final 0 --halo-sync "$HALO_SYNC" --precision "$PRECISION" \
+            --profiling-file "$PROFILE_FILE" --timing-file "$timing" "$@" \
+            > "$dir/logs/run_${run}.log" 2>&1; then
+            echo "    t$run: $(tail -n 1 "$timing")s" >> "$RESULT_FILE"
+        else
+            echo "    t$run: FAILED (see $dir/logs/run_${run}.log)" >> "$RESULT_FILE"
+        fi
+    done
+
+    read -r mean std <<< "$(mean_stddev "$timing")"
+    echo "    mean +/- stddev: ${mean}s +/- ${std}s" >> "$RESULT_FILE"
+    echo "$NP | $label | ${mean}s +/- ${std}s" >> "$SUMMARY_ROWS"
+}
+
+echo "Profiling migration cost for NP=$NP"
+run_mpi "$PROFILER" "$PROFILE_FILE"
+
+echo "HIS benchmark NP=$NP mesh=${X}x${Y}x${Z} precision=$PRECISION halo-sync=$HALO_SYNC" > "$RESULT_FILE"
+: > "$SUMMARY_ROWS"
+
+for iter in $ITERATIONS; do
+    for interval in $(intervals_for_iterations "$iter"); do
+        {
+            echo ""
+            echo "=================================================="
+            echo "NP=$NP | iterations=$iter | rebalance_interval=$interval"
+            echo "=================================================="
+        } >> "$RESULT_FILE"
+
+        for warmup in $WARMUPS; do
+            common=(--iterations "$iter" --rebalance-interval "$interval" --balance-warmup "$warmup")
+
+            for schedule in $SCHEDULES; do
+                run_case "$schedule | profiled | $iter | $warmup | $interval | -" \
+                    "$OUT/profiled/$schedule/iter$iter/warmup$warmup/interval$interval" \
+                    "${common[@]}" --balance-mode "$schedule" --balance-strategy profiled
+
+                for threshold in $THRESHOLDS; do
+                    run_case "$schedule | threshold | $iter | $warmup | $interval | $threshold" \
+                        "$OUT/threshold/$schedule/iter$iter/warmup$warmup/interval$interval/threshold$threshold" \
+                        "${common[@]}" --balance-mode "$schedule" --balance-strategy threshold \
+                        --rebalance-threshold "$threshold"
+                done
+            done
+        done
+    done
+done
+
+{
+    echo ""
+    echo "Summary:"
+    echo "NP | Schedule | Strategy | Iterations | Warm-up (0 = interval) | Interval | Threshold | Mean +/- stddev"
+    cat "$SUMMARY_ROWS"
+} >> "$RESULT_FILE"
+rm -f "$SUMMARY_ROWS"

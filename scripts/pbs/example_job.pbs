@@ -1,0 +1,30 @@
+#!/bin/bash
+#----------------------------------------------------------------------------
+# Minimal PBS job: profiles the migration cost and runs one HIS simulation,
+# one MPI rank per node, started with OpenHPC's prun.
+#
+# Submit from the repository root:
+#   qsub scripts/pbs/example_job.pbs
+#   qsub -l select=1:host=compute-3-7:ncpus=8:mpiprocs=1+1:host=compute-3-4:ncpus=8:mpiprocs=1 \
+#        scripts/pbs/example_job.pbs
+#
+# Build first: ./build.sh && ./examples/his/build.sh
+# See scripts/pbs/job_env.sh for MODULES, LAUNCHER and HARMONY_ROOT.
+#----------------------------------------------------------------------------
+#PBS -N HARMONY_EXAMPLE
+#PBS -j oe
+#PBS -l walltime=01:30:00
+#PBS -l select=2:ncpus=8:mpiprocs=1
+
+set -euo pipefail
+# shellcheck disable=SC1091
+source "${HARMONY_ROOT:-${PBS_O_WORKDIR:-$(pwd)}}/scripts/pbs/job_env.sh"
+
+run_mpi "$HARMONY_ROOT/bin/migration_profiler" profiling_results.txt
+
+run_mpi "$HARMONY_ROOT/examples/his/bin/his" \
+    --x 10 --y 10 --z 10 \
+    --iterations 10000 \
+    --rebalance-interval 1000 \
+    --balance-warmup 2000 \
+    --profiling-file profiling_results.txt

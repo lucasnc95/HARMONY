@@ -1,0 +1,142 @@
+#!/bin/bash
+#----------------------------------------------------------------------------
+# Cardiac tissue benchmark (examples/cardiac_tissue, ToR-ORd-like model, two
+# kernels per step): no balancing as the baseline, then every policy
+# (static/dynamic x profiled/threshold) for each rebalance interval.
+# RUNS runs per case, with mean and standard deviation of the wall time.
+#
+# Ranks are started with OpenHPC's prun, one per line of the PBS node file.
+# Ask for one MPI process per node with mpiprocs=1 (submit from the repository root):
+#
+#   qsub -l select=2:ncpus=16:mpiprocs=1 scripts/pbs/cardiac_benchmark.pbs
+#   qsub -l select=1:host=compute-3-3:ncpus=16:mpiprocs=1+1:host=compute-3-4:ncpus=16:mpiprocs=1 \
+#        scripts/pbs/cardiac_benchmark.pbs
+#
+# Variables that can be overridden with -v:
+#   RUNS, HALO_SYNC (overlap | local | global)
+#   NX NY NZ        tissue size in cells (the wave travels along NZ)
+#   TIME            simulated milliseconds (dt = 0.01 ms -> 100 steps per ms)
+#   PRECISION       float | double
+#   DEVICE          all | gpu | cpu: OpenCL devices used by the balancing runs
+#   BASELINES       devices of the runs without balancing, e.g. "gpu all"
+#   PROGRESS        seconds between progress lines in the logs
+#   DV_MAX CA_TOL   substep tolerances of the cell model (smaller = heavier)
+#   INTERVALS       rebalance intervals in steps, e.g. "100 500 2000"
+#   WARMUPS         steps before the first attempt, e.g. "0 1000 3000" (0 = the interval)
+#   THRESHOLDS      thresholds of the threshold strategy
+#   SCHEDULES       "static dynamic"
+#
+# MODULES, LAUNCHER and HARMONY_ROOT: see scripts/pbs/job_env.sh.
+# Build first: ./build.sh && ./examples/cardiac_tissue/build.sh
+#----------------------------------------------------------------------------
+#PBS -N HARMONY_CARDIAC
+#PBS -j oe
+#PBS -l walltime=14:30:00
+#PBS -l select=2:ncpus=16:mpiprocs=1
+
+set -euo pipefail
+# shellcheck disable=SC1091
+source "${HARMONY_ROOT:-${PBS_O_WORKDIR:-$(pwd)}}/scripts/pbs/job_env.sh"
+
+# Defaults sized for a few hours on 3 nodes with 1 GPU + CPU each; the run
+# without balancing is the slowest one (equal shares for GPUs and CPUs).
+NX=${NX:-32}
+NY=${NY:-32}
+NZ=${NZ:-512}
+TIME=${TIME:-100}
+PRECISION=${PRECISION:-float}
+DV_MAX=${DV_MAX:-0.005}
+CA_TOL=${CA_TOL:-2e-5}
+INTERVALS=${INTERVALS:-"100 500 2000"}
+WARMUPS=${WARMUPS:-"0"}
+THRESHOLDS=${THRESHOLDS:-"0.005 0.01 0.05"}
+SCHEDULES=${SCHEDULES:-"static dynamic"}
+RUNS=${RUNS:-3}
+DEVICE=${DEVICE:-all}
+BASELINES=${BASELINES:-"gpu all"}
+PROGRESS=${PROGRESS:-300}
+HALO_SYNC=${HALO_SYNC:-overlap}
+
+APP="$HARMONY_ROOT/examples/cardiac_tissue/bin/cardiac_tissue"
+PROFILER="$HARMONY_ROOT/bin/migration_profiler"
+
+
+OUT="results/cardiac_np${NP}"
+mkdir -p "$OUT/profiling" "$OUT/summary"
+
+
+PROFILE_FILE="$OUT/profiling/profiling_np${NP}.txt"
+RESULT_FILE="$OUT/summary/results_np${NP}.txt"
+SUMMARY_ROWS="$OUT/summary/.rows_np${NP}.tmp"
+
+mean_stddev() {
+    awk '{ s += $1; sq += $1 * $1; n++ }
+         END { if (n > 0) { m = s / n; v = sq / n - m * m; if (v < 0) v = 0; printf "%.4f %.4f", m, sqrt(v) } }' "$1"
+}
+
+# run_case <label> <dir> <extra args...>
+run_case() {
+    local label=$1 dir=$2
+    shift 2
+    mkdir -p "$dir/logs"
+    local timing="$dir/timings.txt"
+    : > "$timing"
+
+    echo "" >> "$RESULT_FILE"
+    echo "[$label]" >> "$RESULT_FILE"
+    for run in $(seq 1 "$RUNS"); do
+        if run_mpi "$APP" \
+            --nx "$NX" --ny "$NY" --nz "$NZ" --time "$TIME" --precision "$PRECISION" \
+            --dv-max "$DV_MAX" --ca-tol "$CA_TOL" --halo-sync "$HALO_SYNC" --progress "$PROGRESS" \
+            --profiling-file "$PROFILE_FILE" --timing-file "$timing" "$@" \
+            > "$dir/logs/run_${run}.log" 2>&1; then
+            echo "    t$run: $(tail -n 1 "$timing")s" >> "$RESULT_FILE"
+        else
+            echo "    t$run: FAILED (see $dir/logs/run_${run}.log)" >> "$RESULT_FILE"
+        fi
+    done
+
+    read -r mean std <<< "$(mean_stddev "$timing")"
+    echo "    mean +/- stddev: ${mean}s +/- ${std}s" >> "$RESULT_FILE"
+    echo "$NP | $label | ${mean}s +/- ${std}s" >> "$SUMMARY_ROWS"
+}
+
+echo "Profiling migration cost for NP=$NP"
+run_mpi "$PROFILER" "$PROFILE_FILE"
+
+{
+    echo "Cardiac benchmark NP=$NP tissue=${NX}x${NY}x${NZ} time=${TIME}ms precision=$PRECISION"
+    echo "dv_max=$DV_MAX ca_tol=$CA_TOL halo-sync=$HALO_SYNC devices=$DEVICE warm-ups=\"$WARMUPS\""
+} > "$RESULT_FILE"
+: > "$SUMMARY_ROWS"
+
+# Without balancing: GPUs only, and every device with equal shares.
+for dev in $BASELINES; do
+    run_case "off ($dev) | - | - | - | -" "$OUT/off_$dev" --balance-mode off --device "$dev"
+done
+
+for warmup in $WARMUPS; do
+    for interval in $INTERVALS; do
+        for schedule in $SCHEDULES; do
+            run_case "$schedule | profiled | $warmup | $interval | -" \
+                "$OUT/profiled/$schedule/warmup$warmup/interval$interval" \
+                --balance-mode "$schedule" --balance-strategy profiled --rebalance-interval "$interval" \
+                --balance-warmup "$warmup" --device "$DEVICE"
+
+            for threshold in $THRESHOLDS; do
+                run_case "$schedule | threshold | $warmup | $interval | $threshold" \
+                    "$OUT/threshold/$schedule/warmup$warmup/interval$interval/threshold$threshold" \
+                    --balance-mode "$schedule" --balance-strategy threshold --rebalance-interval "$interval" \
+                    --balance-warmup "$warmup" --rebalance-threshold "$threshold" --device "$DEVICE"
+            done
+        done
+    done
+done
+
+{
+    echo ""
+    echo "Summary:"
+    echo "NP | Schedule | Strategy | Warm-up (steps, 0 = interval) | Interval (steps) | Threshold | Mean +/- stddev"
+    cat "$SUMMARY_ROWS"
+} >> "$RESULT_FILE"
+rm -f "$SUMMARY_ROWS"

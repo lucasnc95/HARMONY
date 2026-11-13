@@ -1,0 +1,131 @@
+#!/bin/bash
+#----------------------------------------------------------------------------
+# Paper tests: one benchmark, one precision, one scenario per job.
+# Submit with scripts/pbs/submit_paper_tests.sh, which sets the nodes, the
+# RAM (mem=) of each node and the variables below.
+#
+# Scenarios (SCENARIO):
+#   gpu1  compute-0-2, its GPU only, no balancing                (config "gpu")
+#   n1    compute-0-2, GPU + CPU                                  (5 configs)
+#   n2    compute-0-2 and compute-3-6, GPU + CPU each             (5 configs)
+#   n3    compute-0-2, compute-3-6 and compute-1-0 (128 cores and one GPU)
+#
+# Configurations (CONFIGS, default: all of the scenario):
+#   gpu                GPU only, equal shares, no balancing
+#   off                GPU + CPU, equal shares, no balancing
+#   static_threshold   one attempt after the warm-up, accepted if the
+#                      division changes by >= THRESHOLD (default 0.01)
+#   static_profiled    one attempt after the warm-up, accepted if the time
+#                      saved > migration cost (migration profile of the nodes)
+#   dynamic_threshold  an attempt every INTERVAL iterations after the warm-up
+#   dynamic_profiled   idem, with the cost model
+#
+# Variables: BENCH (his ocean lu map cardiac), PRECISION (float | double),
+# SCENARIO, RUNS (10), RUNS_OFF (runs of "off"; default RUNS), CONFIGS, THRESHOLD (0.01), WARMUP and INTERVAL
+# (iterations; default from paper_cases.sh), LENGTH (iterations, or ms for
+# cardiac; default from paper_cases.sh), CPU_HOST_CORES (1), HALO_SYNC
+# (overlap), GPU_PIN (GPUs a node may use, e.g. "compute-1-0=0"), OUT_DIR
+# (results/paper), PAPER_CASES_FILE (another case file, for tests).
+#
+# Results: $OUT_DIR/<bench>/<precision>/<scenario>/<config>/
+#   timings.txt         wall time of each run (one per line)
+#   run_<N>.log         full output (devices, balancing log, timing summary)
+#   report_run<N>.csv   timing report as CSV (critical-path line, devices, ...)
+#   info.txt            what was run
+# Statistics of everything: scripts/pbs/paper_stats.sh
+#----------------------------------------------------------------------------
+#PBS -N HARMONY_PAPER
+#PBS -j oe
+#PBS -l walltime=12:00:00
+
+set -euo pipefail
+# shellcheck disable=SC1091
+source "${HARMONY_ROOT:-${PBS_O_WORKDIR:-$(pwd)}}/scripts/pbs/job_env.sh"
+# shellcheck disable=SC1091
+source "${PAPER_CASES_FILE:-$HARMONY_ROOT/scripts/pbs/paper_cases.sh}"
+
+: "${BENCH:?set BENCH (his ocean lu map cardiac)}"
+: "${PRECISION:?set PRECISION (float or double)}"
+: "${SCENARIO:?set SCENARIO (gpu1 n1 n2 n3)}"
+RUNS=${RUNS:-10}
+RUNS_OFF=${RUNS_OFF:-$RUNS}
+THRESHOLD=${THRESHOLD:-0.01}
+CPU_HOST_CORES=${CPU_HOST_CORES:-1}
+HALO_SYNC=${HALO_SYNC:-overlap}
+GPU_PIN=${GPU_PIN:-}
+OUT_DIR=${OUT_DIR:-results/paper}
+CONFIGS=${CONFIGS:-}
+CONFIGS=${CONFIGS//:/ }   # submit_paper_tests.sh sends "off:static_threshold:..."
+if [ "$SCENARIO" = "gpu1" ]; then
+    CONFIGS=${CONFIGS:-gpu}
+else
+    CONFIGS=${CONFIGS:-"off static_threshold static_profiled dynamic_threshold dynamic_profiled"}
+fi
+
+APP=$(paper_app "$BENCH")
+PROBLEM=$(paper_problem "$BENCH" "$PRECISION")
+LENGTH=${LENGTH:-$(paper_length "$BENCH" "$PRECISION")}
+ITERATIONS=$(paper_iterations "$BENCH" "$LENGTH")
+INTERVAL=${INTERVAL:-$(( ITERATIONS / 10 > 0 ? ITERATIONS / 10 : 1 ))}
+WARMUP=${WARMUP:-$INTERVAL}
+WRAPPER="$HARMONY_ROOT/scripts/pbs/rank_wrapper.sh"
+
+# One migration profile per scenario (same nodes), measured once.
+PROFILE="$OUT_DIR/profiles/${SCENARIO}.txt"
+mkdir -p "$OUT_DIR/profiles"
+if [ ! -s "$PROFILE" ]; then
+    echo "Measuring the migration cost of scenario $SCENARIO -> $PROFILE"
+    run_mpi "$WRAPPER" --gpu-pin "$GPU_PIN" -- "$HARMONY_ROOT/bin/migration_profiler" "$PROFILE" \
+        < /dev/null > "$OUT_DIR/profiles/${SCENARIO}.log" 2>&1 \
+        || echo "warning: migration profiler failed (see $OUT_DIR/profiles/${SCENARIO}.log)"
+fi
+
+# config_args <config>: device and balancing options
+config_args() {
+    local policy="--balance-warmup $WARMUP --rebalance-interval $INTERVAL"
+    case "$1" in
+        gpu)               echo "--device gpu --balance-mode off" ;;
+        off)               echo "--device all --cpu-host-cores $CPU_HOST_CORES --balance-mode off" ;;
+        static_threshold)  echo "--device all --cpu-host-cores $CPU_HOST_CORES --balance-mode static --balance-strategy threshold --rebalance-threshold $THRESHOLD $policy" ;;
+        static_profiled)   echo "--device all --cpu-host-cores $CPU_HOST_CORES --balance-mode static --balance-strategy profiled $policy" ;;
+        dynamic_threshold) echo "--device all --cpu-host-cores $CPU_HOST_CORES --balance-mode dynamic --balance-strategy threshold --rebalance-threshold $THRESHOLD $policy" ;;
+        dynamic_profiled)  echo "--device all --cpu-host-cores $CPU_HOST_CORES --balance-mode dynamic --balance-strategy profiled $policy" ;;
+        *) echo "unknown config '$1'" >&2; return 1 ;;
+    esac
+}
+
+echo "Benchmark $BENCH ($PRECISION), scenario $SCENARIO on $NODES node(s), $RUNS runs per configuration"
+echo "  problem: $PROBLEM $(paper_length_option "$BENCH" "$LENGTH")"
+echo "  iterations $ITERATIONS, warm-up $WARMUP, interval $INTERVAL, threshold $THRESHOLD"
+
+for config in $CONFIGS; do
+    args=$(config_args "$config")
+    dir="$OUT_DIR/$BENCH/$PRECISION/$SCENARIO/$config"
+    mkdir -p "$dir"
+    timing="$dir/timings.txt"
+    : > "$timing"
+    {
+        echo "benchmark=$BENCH precision=$PRECISION scenario=$SCENARIO config=$config"
+        echo "nodes=$(sort -u "$PBS_NODEFILE" | tr '\n' ' ')"
+        echo "iterations=$ITERATIONS warmup=$WARMUP interval=$INTERVAL threshold=$THRESHOLD runs=$([ "$config" = off ] && echo "$RUNS_OFF" || echo "$RUNS")"
+        echo "command=$APP $PROBLEM $(paper_length_option "$BENCH" "$LENGTH") --precision $PRECISION $args"
+        echo "started=$(date '+%F %T')"
+    } > "$dir/info.txt"
+
+    runs=$RUNS
+    [ "$config" = "off" ] && runs=$RUNS_OFF
+    echo "== $config ($runs runs)"
+    for run in $(seq 1 "$runs"); do
+        # < /dev/null: mpiexec would otherwise read this script's stdin.
+        # shellcheck disable=SC2086
+        if run_mpi "$WRAPPER" --gpu-pin "$GPU_PIN" -- "$APP" $PROBLEM $(paper_length_option "$BENCH" "$LENGTH") \
+            --precision "$PRECISION" $args --halo-sync "$HALO_SYNC" --profiling-file "$PROFILE" \
+            --timing-file "$timing" --report-csv "$dir/report_run${run}.csv" \
+            < /dev/null > "$dir/run_${run}.log" 2>&1; then
+            echo "   run $run: $(tail -n 1 "$timing") s"
+        else
+            echo "   run $run: FAILED (see $dir/run_${run}.log)"
+        fi
+    done
+    echo "finished=$(date '+%F %T')" >> "$dir/info.txt"
+done
