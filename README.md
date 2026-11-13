@@ -48,7 +48,6 @@ examples/              standalone applications, each with its own build.sh
   his/                   Human Immune System simulation (3D mesh) + VTK snapshots
   stencil2d/             2D stencils and a map kernel (ocean, lu, map): HARMONY vs. hand-written MPI+OpenCL
   run_checks.sh          builds and checks every example
-scripts/pbs/           PBS jobs for the cluster
 ```
 
 ## Requirements
@@ -98,12 +97,12 @@ application) reads to use the same compiler and OpenCL. When the OpenCL
 library is outside the default paths, its directory is stored in the
 executable (rpath), so `LD_LIBRARY_PATH` is not needed.
 
-On a cluster, for example:
+For example, with a specific MPI wrapper and OpenCL installation:
 
 ```bash
-MPICXX=/opt/ohpc/pub/mpi/mpich-ofi-gnu13-ohpc/3.4.3/bin/mpic++ \
-OPENCL_INCLUDE_DIR=/usr/local/cuda-12.6/targets/x86_64-linux/include \
-OPENCL_LIBRARY_DIR=/usr/lib64 \
+MPICXX=/path/to/mpi/bin/mpic++ \
+OPENCL_INCLUDE_DIR=/path/to/opencl/include \
+OPENCL_LIBRARY_DIR=/path/to/opencl/lib \
 ./build.sh
 ```
 
@@ -631,160 +630,20 @@ Measures the time to migrate growing volumes between neighbouring devices
 (OpenCL + MPI) and writes the linear segments used by the profiled policies.
 It should be measured with the same nodes as the runs.
 
-## Cluster (PBS)
+## Running with MPI
 
-Build on the login node, with the same modules used by the jobs:
-
-```bash
-module load gnu13 openmpi5
-```
-
-```bash
-./build.sh && ./build.sh examples
-```
-
-The jobs are in `scripts/pbs/` and are submitted from the repository root.
-MPI processes are started with OpenHPC's `prun`, which launches one rank per
-line of the PBS node file. For **one rank per node**, ask for `mpiprocs=1` in
-each chunk:
+Start one MPI process per node; each process drives every OpenCL device of its
+node (`discover_devices`). Many MPI launchers bind each process to a single
+core by default, and an OpenCL CPU device then exposes a single compute unit.
+Disable the binding when CPU devices are used, for example with Open MPI:
 
 ```bash
-qsub -l select=2:ncpus=16:mpiprocs=1 scripts/pbs/cardiac_benchmark.pbs
+mpirun --bind-to none -np 2 ./my_app
 ```
 
-Choosing the nodes:
-
-```bash
-qsub -l select=1:host=compute-3-3:ncpus=16:mpiprocs=1+1:host=compute-3-4:ncpus=16:mpiprocs=1 scripts/pbs/his_benchmark.pbs
-```
-
-With the old syntax `-l nodes=N:ppn=16` the node file has 16 lines per node and
-`prun` would start 16 ranks per node.
-
-| Job | What it does |
-|---|---|
-| `paper_gpu1.pbs`, `paper_n1.pbs`, `paper_n2.pbs`, `paper_n3.pbs` | paper benchmarks, one job per scenario (see below) |
-| `paper_job.pbs` | one benchmark, precision and scenario (used by `submit_paper_tests.sh`) |
-| `his_benchmark.pbs` | HIS with every policy (10 runs each), mean and standard deviation in `results/np<N>/summary/` |
-| `cardiac_benchmark.pbs` | cardiac tissue without balancing (reference) and with every policy, for several intervals, in `results/cardiac_np<N>/summary/` |
-| `example_job.pbs` | migration profile + one HIS run |
-
-Common settings (`scripts/pbs/job_env.sh`), changeable with `qsub -v`:
-
-| Variable | Default | Description |
-|---|---|---|
-| `MODULES` | `gnu13 openmpi5` | modules loaded by the job (empty = use the current environment) |
-| `LAUNCHER` | `prun` | command that starts the ranks |
-| `BIND` | `none` | CPU binding of the ranks; empty keeps the MPI default |
-| `HARMONY_ROOT` | submission directory | where `bin/`, `lib/` and `examples/` are |
-
-By default Open MPI binds each rank to **a single core**, and the OpenCL CPU
-devices then expose a single compute unit. The jobs therefore disable the
-binding (`BIND=none`). Before the runs, the log shows the CPUs each rank may
-use and the RAM of each node.
-
-`his_benchmark.pbs` and `cardiac_benchmark.pbs` accept their own parameters
-with `-v` (size, time, precision, tolerances, intervals, `WARMUPS`,
-`HALO_SYNC`, ...; see the header of each `.pbs`), e.g.:
-
-```bash
-qsub -v WARMUPS="0 1000 3000",INTERVALS="100 500" scripts/pbs/cardiac_benchmark.pbs
-```
-
-## Paper benchmarks
-
-Five benchmarks (`his`, `ocean`, `lu`, `map`, `cardiac`), in double precision
-by default (`PRECISIONS="float double"` runs both), in four scenarios, with 10
-runs per configuration:
-
-| Scenario | Nodes (one MPI process per node) | Configurations |
-|---|---|---|
-| `gpu1` | compute-0-2, GPU only | `gpu` |
-| `n1` | compute-0-2: GPU + CPU | `off`, `static_threshold`, `static_profiled`, `dynamic_threshold`, `dynamic_profiled` |
-| `n2` | compute-0-2 + compute-3-6 | the same 5 |
-| `n3` | compute-0-2 + compute-3-6 + compute-1-0 (vnode 0: 8 cores and its A100 without MIG) | the same 5 |
-
-`off` = equal shares, no balancing; `*_threshold` with a fixed threshold of
-0.01; `*_profiled` with the migration profile measured on the nodes of the
-scenario (once per scenario, in `results/paper/profiles/`). Static = one
-attempt after the warm-up; dynamic = after the warm-up, one attempt every
-interval. Warm-up: 10 iterations; interval: 10 % of the iterations.
-
-| Script (`scripts/pbs/`) | What it does |
-|---|---|
-| `paper_gpu1.pbs`, `paper_n1.pbs`, `paper_n2.pbs`, `paper_n3.pbs` | one job per scenario, with nodes, cores, GPUs and RAM in the header; `-v BENCHES=...` selects the benchmarks |
-| `paper_run.sh` | the work itself: every configuration of the scenario, `RUNS` times |
-| `paper_cases.sh` | size, length and balancing schedule of each benchmark in each precision |
-| `submit_paper_tests.sh` | submits the whole matrix (one job per benchmark and scenario) |
-| `rank_wrapper.sh` | runs on each rank: GPU selection and a check that no MIG instance is visible |
-| `paper_stats.sh` | mean, standard deviation, 95 % confidence interval (Student's t), CV, time per iteration and speedup over `gpu1` |
-
-Submitting one job per benchmark and scenario (from the repository root):
-
-```bash
-qsub -v BENCHES=map scripts/pbs/paper_gpu1.pbs
-qsub -v BENCHES=map scripts/pbs/paper_n1.pbs
-qsub -v BENCHES=map scripts/pbs/paper_n2.pbs
-qsub -v BENCHES=map scripts/pbs/paper_n3.pbs
-```
-
-and likewise for `his`, `ocean`, `lu` and `cardiac`. Or everything at once:
-
-```bash
-DRY_RUN=1 scripts/pbs/submit_paper_tests.sh                       # only prints the qsub commands
-RUNS=1 OUT_DIR=results/pilot scripts/pbs/submit_paper_tests.sh    # pilot: measure the times first
-scripts/pbs/submit_paper_tests.sh                                 # everything
-```
-
-Statistics:
-
-```bash
-scripts/pbs/paper_stats.sh results/paper      # -> results/paper/stats.csv
-```
-
-Nodes and RAM asked (without `mem=` PBS reserves only 6 GB):
-
-| Node | Chunk |
-|---|---|
-| compute-0-2 | `ncpus=32:ngpus=1:mem=28gb:mpiprocs=1` |
-| compute-3-6 | `ncpus=24:ngpus=1:mem=20gb:mpiprocs=1` |
-| compute-1-0 | `ncpus=8:mem=32gb:ngpus=1:vnode=compute-1-0[0]:mpiprocs=1` |
-
-On compute-1-0 the chunk asks for `vnode=compute-1-0[0]`, so PBS reserves the
-GPU of vnode 0 (the A100 without MIG). At the start of every job each process
-lists the GPUs it sees (`nvidia-smi -L`) and the job stops if any of them is a
-MIG instance (NVIDIA's OpenCL does not run on MIG).
-
-**Sizes.** Every field is ≤ 2.75 GiB, so it fits in the largest buffer of the
-RTX A2000 12 GB (~2.9 GiB):
-
-| Benchmark | float | double | per device |
-|---|---|---|---|
-| `his` | 128 × 128 × 5376 points | 128 × 128 × 2688 | 5.3 GiB |
-| `ocean`, `lu` | 26624² | 18944² | 5.3 GiB |
-| `map` | 700 M elements | 350 M | 5.2 GiB |
-| `cardiac` | 256 × 256 × 280 cells (5.1 × 5.1 × 5.6 cm) | 256 × 256 × 140 (2.8 cm in z) | 3.0 GiB |
-
-Cardiac discretization: `dx = 0.02 cm` and `dt = 0.05 ms` (diffusion
-stability: `D·dt/dx² = 0.15 ≤ 1/6`; the cell model subdivides `dt` where it is
-stiff).
-
-**Length.** `his` and `ocean`: 10000 iterations; `lu` and `map`: 5000 (float) /
-1000 (double); `cardiac`: 20 ms (float) / 5 ms (double). The jobs ask for no
-walltime; if the queue imposes a limit, use `qsub -l walltime=...`. The `off`
-configuration with CPUs is by far the slowest (the CPU gets the same share as
-the GPU); `RUNS_OFF` sets fewer runs for it.
-
-Parameters (`qsub -v` for the scenario jobs, environment variables for
-`submit_paper_tests.sh`): `BENCHES`, `PRECISIONS` (`double`), `RUNS` (10),
-`RUNS_OFF`, `CONFIGS`, `WARMUP` (10), `INTERVAL` (10 % of the run), `LENGTH`,
-`THRESHOLD` (0.01), `CPU_HOST_CORES` (1), `HALO_SYNC`, `GPU_PIN`, `OUT_DIR`;
-`submit_paper_tests.sh` also accepts `SCENARIOS`, `PER_CONFIG=1` (one job per
-configuration), `WALLTIME`, `CHUNK_0_2`, `CHUNK_3_6`, `CHUNK_1_0` and `QUEUE`.
-
-Results in `results/paper/<benchmark>/<precision>/<scenario>/<configuration>/`:
-`timings.txt` (one time per run), `run_<N>.log`, `report_run<N>.csv` (with the
-critical-path line) and `info.txt` (the exact command).
+`DeviceSelection::cpu_host_cores` (`--cpu-host-cores` in the examples) leaves
+cores of the CPU device free for the MPI process, which drives the other
+devices and the communication.
 
 ## Tests
 
