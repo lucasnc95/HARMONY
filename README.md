@@ -114,7 +114,7 @@ Para instalar em outro lugar (headers + biblioteca):
 
 ## Uso da API
 
-A forma de chamar é a original (DCL): `bind(...).arg(...)` liga os
+A forma de chamar é: `bind(...).arg(...)` liga os
 argumentos de um kernel e `step(...).invoke(...).with_halo_exchange(...)
 .with_balance(...)` monta uma iteração.
 
@@ -208,25 +208,6 @@ Conceitos:
     passo são movidos;
   - `synchronize_at_end(bool)`: espera os dispositivos no fim do passo
     (padrão `false`, para não perder a sobreposição).
-
-### O que mudou em relação à API original (DCL)
-
-Os nomes são os originais; só foram removidas as inconsistências:
-
-| Original | Agora | Por quê |
-|---|---|---|
-| `tag_field(f, read_source / write_target)` no passo | acesso no `arg(i, f, Access::...)` | com vários kernels por passo, o mesmo campo pode ser escrito por um e lido por outro; o papel no passo era ambíguo |
-| `tag_field(f, halo_source)` | removido | repetia o que o `HaloSpec` já diz |
-| `tag_field(f, rebalance_source)` | mantido | só o buffer com estado precisa ser movido |
-| um único `with_halo_exchange` | pode ser chamado várias vezes | campos com larguras de halo diferentes |
-| `LaunchGeometry::global_size` ignorado | validado (0 ou total de elementos) | um valor errado era aceito sem efeito |
-| tentativa estática por nome de passo | uma única tentativa estática por execução | com dois passos alternados (HIS), o modo estático podia tentar duas vezes |
-| `interval` servia de warm-up no modo estático | campo `warmup` separado | permite variar o warm-up nos testes sem mudar o intervalo |
-
-Funcionalidades novas mantidas: vários kernels por passo, `Access`,
-`HaloSync`, troca de halos em lote, medição de tempos (`start_timing`,
-`stop_timing`, `print_timing_report`, `timing_report`), `print_devices`,
-`print_partitions`, `set_verbose` e `DeviceSelection::kernel_queues`.
 
 ### Vários kernels por passo
 
