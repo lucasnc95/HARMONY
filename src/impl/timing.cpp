@@ -149,16 +149,25 @@ void Runtime::Impl::print_balance_policy(const AutoBalancePolicy& policy) {
     const bool is_threshold = policy.mode == BalanceMode::dynamic_threshold ||
                               policy.mode == BalanceMode::static_threshold;
     const int interval = std::max(1, policy.interval);
-    const int first = policy.warmup > 0 ? policy.warmup : interval;
+    const int warmup = std::max(0, policy.warmup);
 
     std::ostringstream out;
     out << "[HARMONY] Load balancing: " << (is_dynamic ? "dynamic " : "static ")
-        << (is_threshold ? "threshold" : "profiled") << "\n"
-        << "          Warm-up: " << iterations_text(first) << " with the initial division, then ";
-    if (is_dynamic) out << "an attempt every " << iterations_text(interval);
-    else out << "a single attempt";
-    out << ".\n          Each attempt measures the last " << iterations_text(std::min(first, interval))
-        << " and proposes shares proportional to the speed of each device;\n          ";
+        << (is_threshold ? "threshold" : "profiled") << "\n          ";
+    if (warmup > 0) {
+        out << "Warm-up probe at iteration " << detail::format_count(static_cast<std::size_t>(warmup))
+            << " (adjusts the initial division; not a balancing attempt).\n          ";
+    }
+    if (is_dynamic) {
+        out << "Balancing: every " << iterations_text(interval) << " (iterations "
+            << detail::format_count(static_cast<std::size_t>(interval)) << ", "
+            << detail::format_count(static_cast<std::size_t>(2 * interval)) << ", ...).";
+    } else {
+        out << "Balancing: a single attempt, at iteration " << detail::format_count(static_cast<std::size_t>(interval))
+            << ".";
+    }
+    out << "\n          Each one measures the iterations since the previous one and proposes shares proportional\n"
+        << "          to the speed of each device; ";
     if (is_threshold) {
         out << "the new division is applied when it changes by at least " << detail::format_number(policy.threshold, 4)
             << " (L2 distance of the cumulative loads).\n";
@@ -176,12 +185,13 @@ void Runtime::Impl::print_balance_policy(const AutoBalancePolicy& policy) {
 //             Why: ...
 //             Time per iteration: ... (+ a table per device when it changed)
 void Runtime::Impl::print_balance_interval_metrics(BalanceRecord record) {
-    record.number = ++balance_attempts_;
+    record.number = record.warmup_probe ? 0 : ++balance_attempts_;
 
     if (verbose_ && rank_ == 0) {
         const std::string pad = "          ";
         std::ostringstream out;
-        out << "[HARMONY] Balance #" << record.number << " | iteration " << detail::format_count(record.iteration)
+        out << "[HARMONY] " << (record.warmup_probe ? std::string("Warm-up probe") : "Balance #" + std::to_string(record.number))
+            << " | iteration " << detail::format_count(record.iteration)
             << " | " << record.policy << " | " << (record.applied ? "CHANGED the division" : "kept the division")
             << "\n" << pad << "Why: " << record.reason << "\n";
 
@@ -384,8 +394,9 @@ void Runtime::Impl::print_timing_report(std::ostream& os) {
         const bool is_threshold = p.mode == BalanceMode::dynamic_threshold || p.mode == BalanceMode::static_threshold;
         const int interval = std::max(1, p.interval);
         out << "Load balancing: " << (is_dynamic ? "dynamic " : "static ") << (is_threshold ? "threshold" : "profiled")
-            << ", warm-up " << detail::format_count(static_cast<std::size_t>(p.warmup > 0 ? p.warmup : interval));
-        if (is_dynamic) out << ", interval " << detail::format_count(static_cast<std::size_t>(interval));
+            << ", warm-up probe at " << (p.warmup > 0 ? detail::format_count(static_cast<std::size_t>(p.warmup)) : "-")
+            << ", interval " << detail::format_count(static_cast<std::size_t>(interval))
+            << (is_dynamic ? "" : " (single attempt)");
         if (is_threshold) out << ", threshold " << detail::format_number(p.threshold, 4);
         out << "\n";
     } else {
@@ -528,7 +539,12 @@ void Runtime::Impl::print_timing_report(std::ostream& os) {
             bytes += b.bytes_moved;
             migration += b.migration_seconds;
         }
-        out << "  " << r.balance.size() << (r.balance.size() == 1 ? " attempt, " : " attempts, ") << applied
+        std::size_t probes = 0;
+        for (const BalanceRecord& b : r.balance) probes += b.warmup_probe ? 1 : 0;
+        const std::size_t attempts = r.balance.size() - probes;
+        out << "  ";
+        if (probes > 0) out << "Warm-up probe + ";
+        out << attempts << (attempts == 1 ? " attempt" : " attempts") << "; " << applied
             << " changed the division. Data moved: " << detail::format_bytes(bytes) << " in "
             << detail::format_seconds(migration) << ". Decisions: " << detail::format_seconds(decision) << ".\n"
             << "  Time/iteration = kernel time of the slowest device per iteration, measured before the attempt\n"
@@ -546,7 +562,8 @@ void Runtime::Impl::print_timing_report(std::ostream& os) {
                 ++hidden;
                 continue;
             }
-            std::vector<std::string> row = {std::to_string(b.number), detail::format_count(b.iteration)};
+            std::vector<std::string> row = {b.warmup_probe ? "probe" : std::to_string(b.number),
+                                            detail::format_count(b.iteration)};
             if (mixed_policies) row.push_back(b.policy);
             row.push_back(b.applied ? "changed" : "kept");
             row.push_back(b.window_iterations > 0 ? detail::format_seconds(b.iteration_seconds_before) + " -> " +
@@ -570,8 +587,8 @@ void Runtime::Impl::print_timing_report(std::ostream& os) {
             out << "\n  Share of the domain per device: at the start and after each change (#attempt @iteration)\n";
             std::vector<detail::Table::Column> dcols = {{"Dev", false}, {"Type", false}, {"Start", true}};
             for (std::size_t c = first; c < changes.size(); ++c) {
-                dcols.push_back({"#" + std::to_string(changes[c]->number) + " @" +
-                                     detail::format_count(changes[c]->iteration),
+                dcols.push_back({(changes[c]->warmup_probe ? std::string("probe") : "#" + std::to_string(changes[c]->number)) +
+                                     " @" + detail::format_count(changes[c]->iteration),
                                  true});
             }
             detail::Table div(dcols);
@@ -655,11 +672,12 @@ void Runtime::Impl::write_timing_report(const std::string& path) {
     }
 
     out << "#balance,number,iteration,policy,applied,iteration_s_before,iteration_s_after,bytes_moved,"
-           "migration_s,decision_s,reason\n";
+           "migration_s,decision_s,warmup_probe,reason\n";
     for (const BalanceRecord& b : r.balance) {
         out << "balance," << b.number << "," << b.iteration << "," << clean(b.policy) << "," << (b.applied ? 1 : 0)
             << "," << b.iteration_seconds_before << "," << b.iteration_seconds_after << "," << b.bytes_moved << ","
-            << b.migration_seconds << "," << b.decision_seconds << "," << clean(b.reason) << "\n";
+            << b.migration_seconds << "," << b.decision_seconds << "," << (b.warmup_probe ? 1 : 0) << ","
+            << clean(b.reason) << "\n";
     }
 }
 

@@ -347,14 +347,15 @@ std::vector<FieldHandle> Runtime::Impl::fields_used_by(const ExecutionStep& step
 }
 
 // Schedule (iterations counted from the creation of the runtime):
-//   first attempt at `warmup` (or `interval` when warmup is 0);
-//   dynamic modes: then every `interval` iterations; static: only that one.
-// Every decision measures at most the last `interval` iterations, so the
-// window is restarted `interval` iterations before the first attempt.
+//   warm-up probe at iteration `warmup` (if > 0): measures and adjusts the
+//   division, but is not a balancing attempt;
+//   attempts at multiples of `interval`: every one in dynamic modes, only the
+//   first one in static modes; none at or after the last iteration.
+// Each probe or attempt measures the iterations since the previous one.
 void Runtime::Impl::maybe_balance_after_step(const ExecutionStep& step) {
     const AutoBalancePolicy& policy = step.balance;
     const std::size_t interval = static_cast<std::size_t>(std::max(1, policy.interval));
-    const std::size_t first = policy.warmup > 0 ? static_cast<std::size_t>(policy.warmup) : interval;
+    const std::size_t warmup = static_cast<std::size_t>(std::max(0, policy.warmup));
     const std::size_t it = iteration_counter_;
 
     if (!balance_policy_announced_) {
@@ -368,21 +369,13 @@ void Runtime::Impl::maybe_balance_after_step(const ExecutionStep& step) {
     const bool is_dynamic = policy.mode == BalanceMode::dynamic_threshold ||
                             policy.mode == BalanceMode::dynamic_profiled;
 
-    // Drop the start of the warm-up from the first measurement.
-    if (first > interval && it == first - interval && balance_window_start_iteration_ < it) {
-        reset_balance_window_events();
-    }
+    // Moving data for iterations that will not run is pointless.
+    if (policy.total_iterations > 0 && it >= static_cast<std::size_t>(policy.total_iterations)) return;
 
-    bool should_try = false;
-    if (it >= first && (it - first) % interval == 0) {
-        if (is_dynamic) {
-            should_try = true;
-        } else if (!static_balance_attempted_) {
-            should_try = true;
-            static_balance_attempted_ = true;
-        }
-    }
-    if (!should_try) return;
+    const bool scheduled = (it % interval == 0) && (is_dynamic || !static_balance_attempted_);
+    const bool probe = !scheduled && warmup > 0 && it == warmup;
+    if (!scheduled && !probe) return;
+    if (scheduled && !is_dynamic) static_balance_attempted_ = true;
 
     std::vector<FieldHandle> requested = fields_with_role(step, StepFieldRole::rebalance_source);
     if (requested.empty()) requested = fields_used_by(step);
@@ -393,6 +386,7 @@ void Runtime::Impl::maybe_balance_after_step(const ExecutionStep& step) {
 
     BalanceRecord record;
     record.iteration = it;
+    record.warmup_probe = probe;
     record.policy = std::string(is_dynamic ? "dynamic " : "static ") + (is_threshold ? "threshold" : "profiled");
     for (const DevicePartition& p : partitions_) record.elements_before.push_back(p.element_count);
 

@@ -13,7 +13,7 @@
 # Variables that can be overridden with -v: X, Y, Z,
 # ITERATIONS, THRESHOLDS, SCHEDULES, RUNS, HALO_SYNC (overlap | local | global),
 # PRECISION (float | double),
-# WARMUPS (iterations before the first attempt, e.g. "0 2000"; 0 = the interval).
+# WARMUPS (iteration of the warm-up probe, e.g. "0 10 100"; 0 = no probe).
 #
 # MODULES, LAUNCHER and HARMONY_ROOT: see scripts/pbs/job_env.sh.
 # Build first: ./build.sh && ./examples/his/build.sh
@@ -22,7 +22,6 @@
 #----------------------------------------------------------------------------
 #PBS -N HARMONY_HIS
 #PBS -j oe
-#PBS -l walltime=14:30:00
 #PBS -l select=2:ncpus=16:mpiprocs=1
 
 set -euo pipefail
@@ -128,7 +127,7 @@ done
 {
     echo ""
     echo "Summary:"
-    echo "NP | Schedule | Strategy | Iterations | Warm-up (0 = interval) | Interval | Threshold | Mean +/- stddev"
+    echo "NP | Schedule | Strategy | Iterations | Warm-up probe (0 = none) | Interval | Threshold | Mean +/- stddev"
     cat "$SUMMARY_ROWS"
 } >> "$RESULT_FILE"
 rm -f "$SUMMARY_ROWS"

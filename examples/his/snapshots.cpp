@@ -63,7 +63,7 @@ const char* usage =
     "  --balance-mode            off | static | dynamic (dynamic)\n"
     "  --balance-strategy        threshold | profiled (threshold)\n"
     "  --rebalance-interval      iterations (1000)\n"
-    "  --balance-warmup          iterations before the first attempt (0 = interval)\n"
+    "  --balance-warmup          iteration of the warm-up probe (0 = none)\n"
     "  --rebalance-threshold     (0.0003125)\n"
     "  --profiling-file --kernel-file\n";
 

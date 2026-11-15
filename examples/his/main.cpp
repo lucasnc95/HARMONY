@@ -7,7 +7,7 @@
 //   mpirun -np 2 ./his --x 50 --y 50 --z 3200 --iterations 10000
 //          --balance-mode dynamic --balance-strategy threshold
 //          --rebalance-interval 1000 --rebalance-threshold 0.0003125
-//          --balance-warmup 2000   (iterations before the first attempt)
+//          --balance-warmup 10     (warm-up probe at iteration 10)
 //          --precision double      (default: float)
 
 #include "his_mesh.hpp"
@@ -39,7 +39,7 @@ struct Options {
     int z = 3200;
     int iterations = 10000;
     int rebalance_interval = 1000;
-    int balance_warmup = 0;  // iterations before the first attempt (0 = rebalance_interval)
+    int balance_warmup = 0;  // iteration of the warm-up probe (0 = none)
     float rebalance_threshold = 0.0003125f;
     harmony::BalanceMode balance_mode = harmony::BalanceMode::dynamic_threshold;
     std::string profiling_file = "profiling_results.txt";
@@ -251,8 +251,8 @@ int run(const Options& opt, harmony::Runtime& runtime) {
                   << "  Iterations  : " << opt.iterations << "\n"
                   << "  Balancing   : " << balance_name(opt.balance_mode);
         if (opt.balance_mode != harmony::BalanceMode::off) {
-            std::cout << ", warm-up " << (opt.balance_warmup > 0 ? opt.balance_warmup : opt.rebalance_interval)
-                      << " iterations, interval " << opt.rebalance_interval;
+            std::cout << ", warm-up probe at iteration " << opt.balance_warmup
+                      << ", interval " << opt.rebalance_interval;
             if (opt.balance_mode == harmony::BalanceMode::static_threshold ||
                 opt.balance_mode == harmony::BalanceMode::dynamic_threshold) {
                 std::cout << ", threshold " << opt.rebalance_threshold;

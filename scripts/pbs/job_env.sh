@@ -16,6 +16,7 @@
 #   HARMONY_ROOT  repository (or install) directory   (default: submission directory)
 #   MODULES       modules loaded before running         (default: "gnu13 openmpi5")
 #   LAUNCHER      command that starts the MPI ranks     (default: prun)
+#   ONE_RANK_PER_NODE  1 = one rank per host even if the node file repeats it (default: 0)
 #   BIND          CPU binding of the ranks              (default: none)
 #                 By default Open MPI pins each rank to ONE core, and OpenCL CPU
 #                 devices then expose a single compute unit. "none" lets each
@@ -63,6 +64,14 @@ fi
 if [ -n "$BIND" ]; then
     export OMPI_MCA_hwloc_base_binding_policy="$BIND"     # Open MPI <= 4
     export PRTE_MCA_hwloc_default_binding_policy="$BIND"  # Open MPI 5 (PRRTE)
+fi
+
+# ONE_RANK_PER_NODE=1: one process per host even when the node file lists a
+# host more than once (several chunks on the same host, e.g. two vnodes).
+if [ "${ONE_RANK_PER_NODE:-0}" = "1" ]; then
+    unique_nodefile="${TMPDIR:-/tmp}/harmony_nodes.${PBS_JOBID:-$$}"
+    awk '!seen[$0]++' "$PBS_NODEFILE" > "$unique_nodefile"
+    export PBS_NODEFILE="$unique_nodefile"
 fi
 
 # Ranks started by the launcher, and distinct nodes.

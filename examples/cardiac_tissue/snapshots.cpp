@@ -77,7 +77,7 @@ const char* usage =
     "  --balance-mode            off | static | dynamic (dynamic)\n"
     "  --balance-strategy        threshold | profiled (threshold)\n"
     "  --rebalance-interval      steps (100)\n"
-    "  --balance-warmup          steps before the first attempt (0 = interval)\n"
+    "  --balance-warmup          step of the warm-up probe (0 = none)\n"
     "  --rebalance-threshold     (0.01)\n"
     "  --profiling-file          migration profile for 'profiled'\n"
     "  --dx --dt --diffusivity --bcl --stim-planes --dv-max --ca-tol --min-substeps --max-substeps\n"

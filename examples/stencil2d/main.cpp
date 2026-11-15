@@ -142,8 +142,8 @@ void print_header(const Options& o, int ranks) {
         std::cout << "  Halo sync   : " << o.halo_sync << " (HARMONY)\n"
                   << "  Balancing   : " << o.balance_mode;
         if (o.balance_mode != "off") {
-            std::cout << " / " << o.balance_strategy << ", warm-up "
-                      << (o.balance_warmup > 0 ? o.balance_warmup : o.rebalance_interval) << ", interval "
+            std::cout << " / " << o.balance_strategy << ", warm-up probe at "
+                      << o.balance_warmup << ", interval "
                       << o.rebalance_interval;
         }
         std::cout << " (HARMONY)\n";

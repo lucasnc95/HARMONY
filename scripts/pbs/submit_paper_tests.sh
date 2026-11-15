@@ -12,7 +12,8 @@
 #   gpu1  compute-0-2 (GPU only)
 #   n1    compute-0-2 (GPU + CPU)
 #   n2    compute-0-2 + compute-3-6
-#   n3    compute-0-2 + compute-3-6 + compute-1-0 (128 cores, one GPU)
+#   n3    compute-0-2 + compute-3-6 + compute-1-0 (64 cores of vnode 0 with its A100
+#         without MIG + 64 cores of vnode 1)
 #
 # Environment (defaults in brackets):
 #   BENCHES     [his ocean lu map cardiac]
@@ -21,23 +22,21 @@
 #   RUNS        [10]   runs per configuration
 #   RUNS_OFF    [RUNS] runs of the configuration "off" (GPU + CPU with equal
 #               shares: by far the slowest; see the estimate in the README)
-#   PER_CONFIG  [0]    1 = one job per configuration (shorter jobs, for walltime limits)
-#   WALLTIME    [12:00:00]
+#   PER_CONFIG  [0]    1 = one job per configuration (shorter jobs)
+#   WALLTIME    [-]    no walltime by default (the jobs have no limit)
 #   CHUNK_0_2   [1:host=compute-0-2:ncpus=32:ngpus=1:mem=28gb:mpiprocs=1]
 #   CHUNK_3_6   [1:host=compute-3-6:ncpus=24:ngpus=1:mem=20gb:mpiprocs=1]
-#   CHUNK_1_0   [1:host=compute-1-0:ncpus=128:ngpus=1:mem=64gb:mpiprocs=1]
-#   GPU_PIN     [compute-1-0=0]   GPU used on compute-1-0 when PBS does not
-#               restrict it (the GPU of vnode 0); see rank_wrapper.sh
+#   CHUNK_1_0   [1:vnode=compute-1-0[0]:ncpus=64:ngpus=1:mem=32gb:mpiprocs=1+1:vnode=compute-1-0[1]:ncpus=64:mem=32gb:mpiprocs=0]
+#   GPU_PIN     [compute-1-0=0]   fallback: GPU shown on compute-1-0 if PBS does
+#               not set CUDA_VISIBLE_DEVICES itself; see rank_wrapper.sh
 #   QUEUE       [-]    qsub -q
 #   Forwarded to the job: RUNS_OFF WARMUP INTERVAL LENGTH THRESHOLD CPU_HOST_CORES
 #               HALO_SYNC OUT_DIR CONFIGS MODULES LAUNCHER
 #
-# compute-1-0 has several vnodes. The chunk above takes 128 cores and one GPU
-# of the host; rank_wrapper.sh then shows only GPU 0 to the program unless
-# the PBS GPU hook already chose one (CUDA_VISIBLE_DEVICES). To force PBS to
-# give the GPU of vnode 0, use two chunks, for example
-#   CHUNK_1_0="1:vnode=compute-1-0[0]:ngpus=1:ncpus=16:mem=32gb:mpiprocs=1+1:host=compute-1-0:ncpus=112:mem=32gb:mpiprocs=0"
-# (check the vnodes with: pbsnodes -av | grep -A15 'compute-1-0\[').
+# compute-1-0: CHUNK_1_0 asks for 64 cores + the GPU of vnode compute-1-0[0]
+# (the A100 without MIG) and 64 cores of vnode compute-1-0[1] (mpiprocs=0: one
+# MPI process on the host). n3 uses place=free (two chunks on one host) and
+# ONE_RANK_PER_NODE=1. The job checks the GPU before the runs.
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
@@ -47,10 +46,10 @@ PRECISIONS=${PRECISIONS:-double}   # for now only double; "float double" for bot
 SCENARIOS=${SCENARIOS:-"gpu1 n1 n2 n3"}
 RUNS=${RUNS:-10}
 PER_CONFIG=${PER_CONFIG:-0}
-WALLTIME=${WALLTIME:-12:00:00}
+WALLTIME=${WALLTIME:-}   # empty = no walltime asked
 CHUNK_0_2=${CHUNK_0_2:-1:host=compute-0-2:ncpus=32:ngpus=1:mem=28gb:mpiprocs=1}
 CHUNK_3_6=${CHUNK_3_6:-1:host=compute-3-6:ncpus=24:ngpus=1:mem=20gb:mpiprocs=1}
-CHUNK_1_0=${CHUNK_1_0:-1:host=compute-1-0:ncpus=128:ngpus=1:mem=64gb:mpiprocs=1}
+CHUNK_1_0=${CHUNK_1_0:-1:vnode=compute-1-0[0]:ncpus=64:ngpus=1:mem=32gb:mpiprocs=1+1:vnode=compute-1-0[1]:ncpus=64:mem=32gb:mpiprocs=0}
 GPU_PIN=${GPU_PIN:-compute-1-0=0}
 DRY_RUN=${DRY_RUN:-0}
 
@@ -83,8 +82,12 @@ submit() {
             dynamic_profiled) name="${name}_dpr" ;; *) name="${name}_${configs:0:3}" ;;
         esac
     fi
-    local cmd=(qsub -N "${name:0:15}" -l "select=$(select_of "$scenario")" -l place=scatter
-               -l "walltime=$WALLTIME" -v "$vars")
+    local place=scatter
+    [ "$scenario" = "n3" ] && place=free   # two chunks on compute-1-0
+    [ "$scenario" = "n3" ] && vars="$vars,ONE_RANK_PER_NODE=1"
+    local cmd=(qsub -N "${name:0:15}" -l "select=$(select_of "$scenario")" -l "place=$place"
+               -v "$vars")
+    [ -n "$WALLTIME" ] && cmd+=(-l "walltime=$WALLTIME")
     [ -n "${QUEUE:-}" ] && cmd+=(-q "$QUEUE")
     cmd+=(scripts/pbs/paper_job.pbs)
     echo "${cmd[*]}"

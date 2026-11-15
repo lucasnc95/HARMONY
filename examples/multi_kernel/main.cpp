@@ -37,7 +37,7 @@ struct Options {
     int n = 200000;
     int iterations = 100;
     int interval = 25;
-    int warmup = 0;  // iterations before the first balancing attempt (0 = interval)
+    int warmup = 0;  // iteration of the warm-up probe (0 = none)
     float c = 0.2f;
     std::string kernel_file = KERNEL_FILE;
     bool verbose = true;  // log every balancing attempt (--verbose 0 to silence)

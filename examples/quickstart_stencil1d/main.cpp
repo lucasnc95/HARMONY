@@ -26,7 +26,7 @@ struct Options {
     int n = 100000;
     int iterations = 200;
     int interval = 50;
-    int warmup = 0;  // iterations before the first balancing attempt (0 = interval)
+    int warmup = 0;  // iteration of the warm-up probe (0 = none)
     std::string kernel_file = KERNEL_FILE;
     harmony::HaloSync halo_sync = harmony::HaloSync::overlap;
     bool verbose = true;  // log every balancing attempt (--verbose 0 to silence)

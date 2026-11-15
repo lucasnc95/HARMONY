@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
             0.0f,                    // threshold (threshold modes)
             iterations,              // total_iterations (profiled modes)
             "profiling_results.txt", // profiling_file (profiled modes)
-            10                       // warmup: first attempt at iteration 10
+            10                       // warmup: probe at iteration 10; attempts at 100, 200, ...
         })
         .tag_field(v, harmony::StepFieldRole::rebalance_source)  // optional
         .synchronize_at_end(false)
@@ -295,7 +295,7 @@ computation and halo exchange is unchanged.
 
 ### Balancing log
 
-Printed by rank 0 during the run. At the first attempt the policy is
+Printed by rank 0 during the run. At the first probe or attempt the policy is
 described (warm-up, interval and criterion). Every attempt has three lines:
 
 1. `Balance #N | iteration I | policy | CHANGED/kept the division`;
@@ -399,17 +399,23 @@ LOAD BALANCING
 | Mode | When it tries | How it decides |
 |---|---|---|
 | `off` | never | — |
-| `static_threshold` | once, at iteration `warmup` | L2 distance between the current and the proposed cumulative loads ≥ `threshold` |
-| `dynamic_threshold` | at iteration `warmup`, then every `interval` iterations | same |
-| `static_profiled` | once, at iteration `warmup` | estimated time saved until the end of the run > estimated migration cost |
-| `dynamic_profiled` | at iteration `warmup`, then every `interval` iterations | same |
+| `static_threshold` | once, at iteration `interval` | L2 distance between the current and the proposed cumulative loads ≥ `threshold` |
+| `dynamic_threshold` | at iterations `interval`, `2·interval`, `3·interval`, ... | same |
+| `static_profiled` | once, at iteration `interval` | estimated time saved until the end of the run > estimated migration cost |
+| `dynamic_profiled` | at iterations `interval`, `2·interval`, `3·interval`, ... | same |
 
-**Warm-up** (`warmup`): iterations run with the initial division before the
-first attempt (`0` = `interval`). Every attempt measures at most the last
-`interval` iterations; with `warmup > interval`, the start of the run (JIT
-compilation, initial transient, stimulus) is left out of the first
-measurement. In the examples: `--balance-warmup N` (his, cardiac, stencil2d)
-or `--warmup N` (quickstart and multi_kernel).
+**Warm-up probe** (`warmup`, `0` = none). At iteration `warmup` the runtime
+measures the devices and adjusts the division with the same rule as the
+policy, so the run does not stay long with the initial (equal) division. The
+probe is **not** a balancing attempt: the attempts keep their schedule (the
+multiples of `interval`), and a static policy still makes its single attempt
+at iteration `interval`. With `warmup = 10` and `interval = 1000`: probe at
+iteration 10, attempts at 1000, 2000, 3000, ... (static: only at 1000). Each
+probe or attempt measures the iterations since the previous one; there is no
+attempt at the last iteration. The live log shows the probe as `Warm-up probe`
+and the attempts as `Balance #N`. In the examples: `--balance-warmup N` (his,
+cardiac, stencil2d) or `--warmup N` (quickstart and multi_kernel), and
+`--rebalance-interval N` / `--interval N`.
 
 The proposed loads are proportional to the measured throughput of each device
 (elements per second of kernel time in the window). The profiled modes use
@@ -517,7 +523,7 @@ with a sequential CPU run (small tissues only).
 | `--precision` | `float` | `float` or `double` |
 | `--balance-mode` / `--balance-strategy` | `dynamic` / `threshold` | as in HIS |
 | `--rebalance-interval` / `--rebalance-threshold` | `200` steps / `0.01` | |
-| `--balance-warmup` | `0` (= interval) | steps before the first attempt |
+| `--balance-warmup` | `0` (none) | step of the warm-up probe |
 | `--device` | `all` | `all`, `gpu` or `cpu`: OpenCL devices used |
 | `--progress` | `60` | seconds between progress lines (with an estimate of the total time) |
 | `--cpu-host-cores` | `0` | cores of each CPU device left to the MPI process |
@@ -540,7 +546,7 @@ mpirun -np 2 examples/his/bin/his --x 50 --y 50 --z 3200 --iterations 10000 \
 | `--balance-mode` | `dynamic` | `off`, `static` or `dynamic` |
 | `--balance-strategy` | `threshold` | `threshold` or `profiled` |
 | `--rebalance-interval` | `1000` | iterations between attempts |
-| `--balance-warmup` | `0` (= interval) | iterations before the first attempt |
+| `--balance-warmup` | `0` (none) | iteration of the warm-up probe |
 | `--rebalance-threshold` | `0.0003125` | threshold of the threshold strategy |
 | `--profiling-file` | `profiling_results.txt` | profile of the profiled strategy |
 | `--timing-file` | — | appends the wall time (one line per run) |

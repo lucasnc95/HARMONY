@@ -218,8 +218,9 @@ struct HaloSpec {
 struct AutoBalancePolicy {
     BalanceMode mode{BalanceMode::off};
 
-    // dynamic modes: a rebalance attempt every `interval` iterations.
-    // static modes:  a single attempt (see warmup).
+    // Balancing attempts happen at multiples of `interval`:
+    //   dynamic modes: iterations interval, 2*interval, 3*interval, ...
+    //   static modes:  only iteration `interval`.
     int interval{0};
 
     // Threshold modes: minimum L2 distance between the current and the
@@ -233,12 +234,11 @@ struct AutoBalancePolicy {
     // (output of tools/migration_profiler).
     std::string profiling_file;
 
-    // Iterations run with the initial division before the first attempt
-    // (0 = `interval`). The first attempt happens at iteration `warmup`;
-    // dynamic modes then try again every `interval` iterations. Every
-    // attempt uses the kernel times of at most the last `interval`
-    // iterations, so the start of the run is not measured when
-    // warmup > interval.
+    // Warm-up probe (0 = none): at iteration `warmup` the runtime measures
+    // the devices and adjusts the division with the same rule, so the run
+    // does not stay long with the initial (equal) division. The probe is NOT
+    // a balancing attempt: the attempts keep their schedule (multiples of
+    // `interval`) and a static policy still makes its single attempt.
     int warmup{0};
 };
 
@@ -313,7 +313,8 @@ struct RankReport {
 // One load-balancing attempt (automatic or rebalance_to()). The vectors have
 // one entry per device (global index order).
 struct BalanceRecord {
-    int number{0};                       // 1, 2, 3, ...
+    int number{0};                       // 1, 2, 3, ... (0 = warm-up probe)
+    bool warmup_probe{false};            // the warm-up probe, not a balancing attempt
     std::size_t iteration{0};
     std::string policy;                  // "static threshold", "dynamic profiled", ..., "manual"
     bool applied{false};

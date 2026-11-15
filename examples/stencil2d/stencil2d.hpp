@@ -40,7 +40,7 @@ struct Options {
     std::string balance_mode = "off";   // off | static | dynamic
     std::string balance_strategy = "profiled";  // threshold | profiled
     int rebalance_interval = 100;
-    int balance_warmup = 0;             // 0 = rebalance_interval
+    int balance_warmup = 0;             // iteration of the warm-up probe (0 = none)
     float rebalance_threshold = 0.01f;
     std::string profiling_file = "profiling_results.txt";
     int cpu_host_cores = 0;             // cores of each CPU device left to the MPI process

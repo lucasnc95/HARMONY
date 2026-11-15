@@ -31,13 +31,13 @@
 # where it is stiff. The wave (~0.5 m/s) starts at z = 0 and travels along
 # z, the partitioned axis.
 #
-# RUN LENGTH. Chosen so that a run on ONE GPU takes roughly 0.5-2 minutes
-# (estimates from earlier HIS/cardiac runs; double precision is 20-60x
-# slower on these GPUs, hence the shorter runs). Measure with a pilot
-# (submit_paper_tests.sh with RUNS=1) and set LENGTH if needed.
+# RUN LENGTH. his 10000 iterations; ocean 10000; lu and map 5000 (float) /
+# 1000 (double); cardiac 20 ms (float) / 5 ms (double). LENGTH overrides it.
 #
-# BALANCING. interval = 10 % of the run; warm-up = one interval (the first
-# attempt measures iterations 1..warm-up). WARMUP and INTERVAL override them.
+# BALANCING. warm-up probe at iteration 10 (adjusts the equal division early;
+# not a balancing attempt); balancing every 10 % of the run: e.g. HIS
+# (10000 iterations) at 1000, 2000, ..., 9000 (static: only at 1000).
+# WARMUP and INTERVAL override them.
 
 PAPER_BENCHMARKS="his ocean lu map cardiac"
 
@@ -71,11 +71,10 @@ paper_problem() {
 # paper_length <benchmark> <precision>: iterations (cardiac: simulated ms)
 paper_length() {
     case "$1:$2" in
-        his:float)      echo 2000 ;;
-        his:double)     echo 1000 ;;
-        ocean:*)        echo 2000 ;;
-        lu:float|map:float)   echo 1000 ;;
-        lu:double|map:double) echo 100 ;;
+        his:*)          echo 10000 ;;
+        ocean:*)        echo 10000 ;;
+        lu:float|map:float)   echo 5000 ;;
+        lu:double|map:double) echo 1000 ;;
         cardiac:float)  echo 20 ;;   # 400 steps of 0.05 ms
         cardiac:double) echo 5 ;;    # 100 steps
         *) echo "unknown case '$1:$2'" >&2; return 1 ;;

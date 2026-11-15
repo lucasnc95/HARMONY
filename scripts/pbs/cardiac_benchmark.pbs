@@ -22,7 +22,7 @@
 #   PROGRESS        seconds between progress lines in the logs
 #   DV_MAX CA_TOL   substep tolerances of the cell model (smaller = heavier)
 #   INTERVALS       rebalance intervals in steps, e.g. "100 500 2000"
-#   WARMUPS         steps before the first attempt, e.g. "0 1000 3000" (0 = the interval)
+#   WARMUPS         warm-up probe step, e.g. "0 10 100" (0 = no probe)
 #   THRESHOLDS      thresholds of the threshold strategy
 #   SCHEDULES       "static dynamic"
 #
@@ -31,7 +31,6 @@
 #----------------------------------------------------------------------------
 #PBS -N HARMONY_CARDIAC
 #PBS -j oe
-#PBS -l walltime=14:30:00
 #PBS -l select=2:ncpus=16:mpiprocs=1
 
 set -euo pipefail
@@ -136,7 +135,7 @@ done
 {
     echo ""
     echo "Summary:"
-    echo "NP | Schedule | Strategy | Warm-up (steps, 0 = interval) | Interval (steps) | Threshold | Mean +/- stddev"
+    echo "NP | Schedule | Strategy | Warm-up probe (step, 0 = none) | Interval (steps) | Threshold | Mean +/- stddev"
     cat "$SUMMARY_ROWS"
 } >> "$RESULT_FILE"
 rm -f "$SUMMARY_ROWS"

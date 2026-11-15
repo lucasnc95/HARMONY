@@ -67,7 +67,7 @@ struct Options {
     bool double_precision = false;
     harmony::BalanceMode balance = harmony::BalanceMode::dynamic_threshold;
     int rebalance_interval = 200;  // steps
-    int balance_warmup = 0;        // steps before the first attempt (0 = rebalance_interval)
+    int balance_warmup = 0;        // step of the warm-up probe (0 = none)
     int cpu_host_cores = 0;        // cores of each CPU device left to the MPI process
     float rebalance_threshold = 0.01f;
     std::string profiling_file = "profiling_results.txt";
@@ -97,7 +97,7 @@ const char* usage =
     "  --balance-mode             off | static | dynamic (dynamic)\n"
     "  --balance-strategy         threshold | profiled (threshold)\n"
     "  --rebalance-interval       steps between attempts (200)\n"
-    "  --balance-warmup           steps before the first attempt (0 = interval)\n"
+    "  --balance-warmup           step of the warm-up probe (0 = none)\n"
     "  --cpu-host-cores           cores of each CPU device left to the MPI process (0)\n"
     "  --report-csv               writes the timing report as CSV to this file\n"
     "  --rebalance-threshold      (0.01)\n"
@@ -340,8 +340,7 @@ int main(int argc, char** argv) {
                         o.min_substeps, o.max_substeps);
             std::printf("  Balancing   : %s", balance_name(o.balance));
             if (o.balance != harmony::BalanceMode::off) {
-                std::printf(", warm-up %d steps, every %d steps",
-                            o.balance_warmup > 0 ? o.balance_warmup : o.rebalance_interval, o.rebalance_interval);
+                std::printf(", warm-up probe at step %d, interval %d steps", o.balance_warmup, o.rebalance_interval);
             }
             std::printf("\n\n");
         }
