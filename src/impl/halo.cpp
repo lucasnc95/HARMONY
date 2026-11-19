@@ -53,15 +53,15 @@ struct HaloMessage {
     std::size_t bytes{0};
     int tag{0};
     unsigned char* host{nullptr};   // staging buffer
-    cl_event read_ev{nullptr};
-    cl_event write_ev{nullptr};
+    detail::ScopedEvent read_ev;
+    detail::ScopedEvent write_ev;
 };
 
-void wait_and_release(cl_event& ev, const char* what) {
-    if (ev == nullptr) return;
-    detail::check_cl(clWaitForEvents(1, &ev), what);
-    clReleaseEvent(ev);
-    ev = nullptr;
+void wait_and_release(detail::ScopedEvent& ev, const char* what) {
+    if (!ev) return;
+    cl_event raw = ev.get();
+    detail::check_cl(clWaitForEvents(1, &raw), what);
+    ev.reset();
 }
 
 } // namespace
@@ -127,7 +127,7 @@ void Runtime::Impl::exchange_halo_set(const std::vector<std::pair<FieldHandle, s
                     m.route = src_here ? Route::send : Route::receive;
                     m.peer_rank = src_here ? dst.owning_rank : src.owning_rank;
                 }
-                messages.push_back(m);
+                messages.push_back(std::move(m));
             }
         }
     }
@@ -172,20 +172,29 @@ void Runtime::Impl::exchange_halo_set(const std::vector<std::pair<FieldHandle, s
                 clEnqueueCopyBuffer(local_devices_[m.dst_device].transfer_queue, src_mem,
                                     m.rf->replicas[m.dst_device], m.src_offset, m.dst_offset, m.bytes,
                                     static_cast<cl_uint>(deps.size()), deps.empty() ? nullptr : deps.data(),
-                                    &m.write_ev),
+                                    m.write_ev.out_ptr()),
                 "clEnqueueCopyBuffer(halo)");
         } else {
             detail::check_cl(
                 clEnqueueReadBuffer(local_devices_[m.src_device].transfer_queue, src_mem, CL_FALSE, m.src_offset,
                                     m.bytes, m.host, static_cast<cl_uint>(deps.size()),
-                                    deps.empty() ? nullptr : deps.data(), &m.read_ev),
+                                    deps.empty() ? nullptr : deps.data(), m.read_ev.out_ptr()),
                 "clEnqueueReadBuffer(halo)");
         }
-        set_field_read_event(m.rf->core[m.src_device], m.route == Route::device_copy ? m.write_ev : m.read_ev);
-        if (m.route == Route::device_copy) track_transfer_event(m.dst_device, m.write_ev);
-        else track_transfer_event(m.src_device, m.read_ev);
+        set_field_read_event(m.rf->core[m.src_device],
+                             m.route == Route::device_copy ? m.write_ev.get() : m.read_ev.get());
+        if (m.route == Route::device_copy) track_transfer_event(m.dst_device, m.write_ev.get());
+        else track_transfer_event(m.src_device, m.read_ev.get());
     }
-    for (detail::LocalDevice& ld : local_devices_) clFlush(ld.transfer_queue);
+    // Flush producer kernel queues before cross-queue transfer reads/waits.
+    for (detail::LocalDevice& ld : local_devices_) {
+        for (cl_command_queue kq : ld.kernel_queues) {
+            if (kq != nullptr) detail::check_cl(clFlush(kq), "clFlush(halo kernel queue)");
+        }
+        if (ld.transfer_queue != nullptr) {
+            detail::check_cl(clFlush(ld.transfer_queue), "clFlush(halo transfer queue)");
+        }
+    }
 
     auto enqueue_write = [&](HaloMessage& m) {
         const detail::AccessTracker& ghost = m.rf->ghost[m.dst_device];
@@ -194,10 +203,14 @@ void Runtime::Impl::exchange_halo_set(const std::vector<std::pair<FieldHandle, s
         detail::check_cl(
             clEnqueueWriteBuffer(local_devices_[m.dst_device].transfer_queue, m.rf->replicas[m.dst_device],
                                  CL_FALSE, m.dst_offset, m.bytes, m.host, static_cast<cl_uint>(deps.size()),
-                                 deps.empty() ? nullptr : deps.data(), &m.write_ev),
+                                 deps.empty() ? nullptr : deps.data(), m.write_ev.out_ptr()),
             "clEnqueueWriteBuffer(halo)");
-        track_transfer_event(m.dst_device, m.write_ev);
-        clFlush(local_devices_[m.dst_device].transfer_queue);
+        track_transfer_event(m.dst_device, m.write_ev.get());
+        for (cl_command_queue kq : local_devices_[m.dst_device].kernel_queues) {
+            if (kq != nullptr) detail::check_cl(clFlush(kq), "clFlush(halo write kernel queue)");
+        }
+        detail::check_cl(clFlush(local_devices_[m.dst_device].transfer_queue),
+                         "clFlush(halo write transfer queue)");
     };
 
     // ---- 3. Send (or write locally) as soon as each read is done -------------
@@ -241,24 +254,31 @@ void Runtime::Impl::exchange_halo_set(const std::vector<std::pair<FieldHandle, s
                           "MPI_Waitall(halo sends)");
     }
 
+    // Host buffers are reused next time, so writes from them must finish before
+    // transferring ownership of write_ev to ghost.writers.
+    for (HaloMessage& m : messages) {
+        if (!m.write_ev || m.route == Route::device_copy) continue;
+        PhaseTimer wait_timer(*this, Phase::device_wait);
+        cl_event raw = m.write_ev.get();
+        detail::check_cl(clWaitForEvents(1, &raw), "clWaitForEvents(halo write)");
+    }
+
     // The new ghost writes replace the previous writers and readers of the
     // ghost region (they all waited for them).
-    std::map<std::pair<int, std::size_t>, std::vector<cl_event>> new_writers;
+    std::map<std::pair<int, std::size_t>, detail::ScopedEventList> new_writers;
     for (HaloMessage& m : messages) {
-        if (m.write_ev != nullptr) new_writers[{m.field.value, m.dst_device}].push_back(m.write_ev);
+        if (m.write_ev) new_writers[{m.field.value, m.dst_device}].push_back(std::move(m.write_ev));
     }
     for (auto& [key, events] : new_writers) {
         detail::AccessTracker& ghost = fields_.at(key.first).ghost[key.second];
+        std::vector<cl_event> committed;
+        committed.reserve(events.size());
         detail::release_events(ghost.writers);
         detail::release_events(ghost.readers);
-        ghost.writers = events;  // takes the reference of each event
-    }
-
-    // Host buffers are reused next time, so writes from them must finish.
-    for (HaloMessage& m : messages) {
-        if (m.write_ev == nullptr || m.route == Route::device_copy) continue;
-        PhaseTimer wait_timer(*this, Phase::device_wait);
-        detail::check_cl(clWaitForEvents(1, &m.write_ev), "clWaitForEvents(halo write)");
+        for (detail::ScopedEvent& ev : events) {
+            committed.push_back(ev.release());
+        }
+        ghost.writers = std::move(committed);
     }
 }
 

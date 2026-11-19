@@ -74,6 +74,18 @@ public:
     // --- devices.cpp --------------------------------------------------------
     void initialize_mpi_from_runtime();
     void discover_devices(const DeviceSelection& selection);
+    void set_simulated_devices_count(int count) noexcept;
+    void set_simulated_ranks_for_testing(int ranks) noexcept;
+    void set_simulated_times(const std::vector<double>& times) noexcept;
+    void clear_simulated_times() noexcept;
+    void set_topo_metrics(const TopoMetrics& metrics);
+    const std::optional<TopoMetrics>& topo_metrics() const noexcept { return topo_metrics_; }
+    void set_numa_cost_gain_ratio_threshold(double threshold) noexcept {
+        numa_cost_gain_ratio_threshold_ = threshold;
+    }
+    double numa_cost_gain_ratio_threshold() const noexcept {
+        return numa_cost_gain_ratio_threshold_;
+    }
     void print_devices(std::ostream& os) const;
 
     const std::vector<DeviceInfo>& devices() const noexcept { return devices_; }
@@ -81,7 +93,7 @@ public:
     const std::vector<DevicePartition>& partitions() const noexcept { return partitions_; }
     const std::vector<DeviceTiming>& device_timings() const noexcept { return device_timings_; }
     int rank() const noexcept { return rank_; }
-    int size() const noexcept { return size_; }
+    int size() const noexcept { return simulated_ranks_ > 0 ? simulated_ranks_ : mpi_size_; }
     MPI_Comm communicator() const noexcept { return comm_; }
 
     // --- resources.cpp ------------------------------------------------------
@@ -141,7 +153,8 @@ private:
     int owner_rank_of_global_device(int g) const;
     int local_index_of_global_device(int g) const;
     void rebuild_partitions_equal_like_wrapper();
-    std::vector<DevicePartition> partitions_from_loads(const std::vector<float>& loads) const;
+    std::vector<DevicePartition> partitions_from_loads(const std::vector<float>& loads,
+                                                       bool allow_empty = false) const;
     std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& parts) const;
 
     // --- execution.cpp ------------------------------------------------------
@@ -152,6 +165,7 @@ private:
 
     std::vector<ResolvedFieldArg> resolve_field_args(const KernelInvocation& ki, const ExecutionStep& step) const;
     void validate_invocation(const KernelInvocation& ki, const std::vector<ResolvedFieldArg>& fields) const;
+    void prune_micro_partitions_for_halos(std::size_t max_halo_width);
     std::vector<std::size_t> assign_queues(const std::vector<std::vector<ResolvedFieldArg>>& fields) const;
     void run_invocation(const KernelInvocation& ki, const std::vector<ResolvedFieldArg>& fields,
                         std::size_t queue_slot, HaloSync sync);
@@ -209,23 +223,40 @@ private:
                             const std::vector<DevicePartition>& new_parts);
     void redistribute_selected_registered_fields(const std::vector<FieldHandle>& fields,
                              const std::vector<DevicePartition>& old_parts,
-                             const std::vector<DevicePartition>& new_parts);
+                             const std::vector<DevicePartition>& new_parts,
+                             bool synchronize_ranks = true);
     void apply_partitions(const std::vector<FieldHandle>& fields,
                           const std::vector<DevicePartition>& old_parts,
                           const std::vector<DevicePartition>& new_parts,
-                          BalanceRecord& record);
+                          BalanceRecord& record,
+                          bool synchronize_ranks = true);
     std::size_t bytes_moved(const std::vector<FieldHandle>& fields,
                             const std::vector<DevicePartition>& old_parts,
                             const std::vector<DevicePartition>& new_parts) const;
     std::vector<FieldHandle> all_field_handles() const;
 
     // --- balancing.cpp ------------------------------------------------------
-    bool maybe_rebalance_from_timings(const std::vector<FieldHandle>& requested_fields, float threshold,
-                                   BalanceRecord& record);
+    void validate_collective_balance_inputs(const std::vector<FieldHandle>& fields, const char* context);
+    double estimate_total_migration_cost_seconds(const std::vector<FieldHandle>& fields,
+                                                 const std::vector<DevicePartition>& old_parts,
+                                                 const std::vector<DevicePartition>& new_parts) const;
+    bool passes_numa_cost_gate(const std::vector<FieldHandle>& fields,
+                               const std::vector<DevicePartition>& old_parts,
+                               const std::vector<DevicePartition>& new_parts,
+                               const AutoBalancePolicy& policy,
+                               BalanceRecord& record);
+    bool maybe_rebalance_from_timings(const std::vector<FieldHandle>& requested_fields,
+                                      const AutoBalancePolicy& policy, BalanceRecord& record);
     bool maybe_rebalance_profiled(const std::vector<FieldHandle>& requested_fields,
                                   const AutoBalancePolicy& policy, BalanceRecord& record);
+    bool maybe_rebalance_hierarchical(const std::vector<FieldHandle>& requested_fields,
+                                      const AutoBalancePolicy& policy, BalanceRecord& record);
     std::vector<double> collect_global_balance_times_from_window(const char* context);
-    bool propose_division(std::vector<DevicePartition>& new_parts, BalanceRecord& record, const char* context);
+    unsigned int synchronize_hwtopolb_seed(unsigned int policy_seed);
+    void apply_collective_power_cap(std::vector<float>& proposed, const AutoBalancePolicy& policy,
+                                    BalanceRecord& record);
+    bool propose_division(std::vector<DevicePartition>& new_parts, const AutoBalancePolicy& policy,
+                          BalanceRecord& record, const char* context);
     std::size_t max_bytes_received_by_a_rank(const std::vector<FieldHandle>& fields,
                                              const std::vector<DevicePartition>& old_parts,
                                              const std::vector<DevicePartition>& new_parts) const;
@@ -241,7 +272,8 @@ private:
     int& argc_;
     char**& argv_;
     int rank_{0};
-    int size_{1};
+    int mpi_size_{1};
+    int simulated_ranks_{0};
     MPI_Comm comm_{MPI_COMM_WORLD};
     MPI_Comm halo_comm_{MPI_COMM_NULL};  // private communicator for halo messages
 
@@ -306,6 +338,10 @@ private:
     bool verbose_{true};
     int balance_attempts_{0};
     bool devices_discovered_{false};
+    bool simulated_devices_{false};
+    std::vector<double> simulated_times_;
+    std::optional<TopoMetrics> topo_metrics_{};
+    double numa_cost_gain_ratio_threshold_{0.50};
 };
 
 } // namespace harmony

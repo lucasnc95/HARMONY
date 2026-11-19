@@ -1,5 +1,7 @@
 # HARMONY
 
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lispz1610/HARMONY/blob/feature/migrate-to-upstream-harmony/colab/harmony_colab.ipynb)
+
 An abstraction layer over **OpenCL + MPI** that runs OpenCL kernels on a
 heterogeneous cluster (CPUs, GPUs and accelerators on several nodes) with
 **automatic load balancing**.
@@ -41,13 +43,21 @@ src/                   library (libharmony.a)
     timing.cpp             per-phase timers and the timing report
   detail/                internal helpers (errors, load math, tables)
 tools/migration_profiler/  measures the migration cost (profiled policies)
-examples/              standalone applications, each with its own build.sh
+tools/topo_probe/          measures PCIe and MPI latency/bandwidth (JSON output)
+benchmarks/                kNeighbor, LeanMD, Super Job matrix runner, telemetry probe, and analyzer
+colab/                     optional Google Colab Pre-Cluster Validation scripts and notebook
+examples/                  standalone applications, each with its own build.sh
   quickstart_stencil1d/  minimal example, checked against the CPU
   multi_kernel/          three kernels per step, checked against the CPU
   cardiac_tissue/        cardiac tissue with a ToR-ORd-like cell model, 2 kernels per step + VTK snapshots
   his/                   Human Immune System simulation (3D mesh) + VTK snapshots
   stencil2d/             2D stencils and a map kernel (ocean, lu, map): HARMONY vs. hand-written MPI+OpenCL
   run_checks.sh          builds and checks every example
+tests/                     C++ unit/preflight tests (tests/bin/test_*), Python harnesses, and check_invariants.sh
+docs/adr/                  Architectural Decision Records (Super Job & Pre-Cluster Validation)
+job_harmony_super.pbs      single-allocation PBS Super Job batch script
+GLOSSARY.md                domain ubiquitous language and prohibited synonyms
+CODING_STANDARDS.md        frozen core invariants, artifact names, and review standards
 ```
 
 ## Requirements
@@ -62,7 +72,7 @@ examples/              standalone applications, each with its own build.sh
 ./build.sh
 ```
 
-Produces `lib/libharmony.a` and `bin/migration_profiler`. The build is
+Produces `lib/libharmony.a`, `bin/migration_profiler`, and `bin/topo_probe`. The build is
 incremental: only what changed (sources, included headers or flags) is
 recompiled.
 
@@ -71,10 +81,13 @@ Usage: ./build.sh [options] [targets]
 
 Targets (default: lib tools):
   lib        static library lib/libharmony.a
-  tools      bin/migration_profiler
+  tools      bin/migration_profiler and bin/topo_probe
+  benchmarks bin/kneighbor and bin/leanmd (needs lib)
   examples   builds every example with its own build.sh (needs lib)
+  tests      builds C++ tests into tests/bin/ with tests/build.sh (needs lib)
+  all        builds lib, tools, benchmarks, examples and tests
   install    copies include/ and lib/ to the prefix given with -p
-  clean      removes build/, lib/, bin/ and the examples' build output
+  clean      removes build/, lib/, bin/, examples/*/bin/ and tests/ build output
 
 Options:
   -r         release build (default): -O3
@@ -668,3 +681,57 @@ Note: POCL 5.0 has an internal bug (`pocl_release_dlhandle_cache: Assertion
 'found->ref_count > 0'`) when it exposes more than one device
 (`POCL_DEVICES="cpu cpu"`). To emulate several devices per rank, also set
 `POCL_KERNEL_CACHE=0`.
+
+Run the C++ and Python unit/integration test suites and repository invariant gate:
+
+```bash
+./build.sh all
+bash tests/run_tests.sh
+bash tests/check_invariants.sh
+```
+
+## Pre-Cluster Validation and PBS Super Job Evaluation
+
+### Pre-Cluster Validation on Google Colab (Optional)
+
+For developers without local access to a physical OpenCL-compatible GPU, HARMONY provides an optional **Pre-Cluster Validation** testbed on Google Colab. This workflow validates C++17 compilation via `./build.sh`, OpenCL GPU device discovery, multi-rank MPI asynchronous halo exchange, and finite numerical outputs (`std::isfinite` checks) before submitting jobs to the HPC cluster PBS queue.
+
+> **Operational Boundary**: Google Colab runs on a single-node virtualized GPU with MPI ranks oversubscribed on one GPU. It validates functional correctness and fail-fast toolchain readiness, and **cannot substitute multi-node cluster benchmark measurements, interconnect latency evaluations, or speedup claims** (see [ADR-0001](docs/adr/0001-non-invasive-pbs-super-job.md) and [ADR-0002](docs/adr/0002-colab-pre-cluster-validation.md)).
+
+Run Pre-Cluster Validation in two ways:
+
+1. **Interactive Notebook (1-click)**:
+   Open [`colab/harmony_colab.ipynb`](colab/harmony_colab.ipynb) via the Colab badge at the top of this README, select a GPU runtime (`Runtime -> Change runtime type -> T4 GPU`), and run the cells sequentially.
+2. **Modular CLI Scripts**:
+   - `bash colab/bootstrap.sh`: Provisions Open MPI, OpenCL headers, ICD loader, and `clinfo`, and verifies an OpenCL GPU via `nvidia-smi` and `clinfo` (rejecting CPU-only fallback).
+   - `bash colab/build.sh`: Compiles `lib/libharmony.a`, `bin/topo_probe`, `bin/kneighbor`, `bin/leanmd`, and `tests/bin/test_*` via `./build.sh lib tools benchmarks tests`.
+   - `bash colab/run_validation.sh`: Executes the 3-phase validation suite (Phase 1 R1-R5 unit tests, Phase 2 1- and 2-rank `tests/bin/test_async_halo_opencl`, Phase 3 short `bin/kneighbor` and `bin/leanmd` runs under `erad` and `hwtopolb`), writing logs and `colab_status.json`.
+
+### Super Job Variance Investigation Workflow
+
+To evaluate multi-GPU load-balancing variance (`erad` vs. `hwtopolb`) on the HPC cluster while keeping the core runtime (`include/harmony/` and `src/`) 100% frozen against baseline `8d7c3392c8d616997b342f778ca041a9a717aff2`, HARMONY provides a single-allocation PBS Super Job (`job_harmony_super.pbs`). It runs Preflight Verification, an untimed warm-up, a 5-repetition Rotated Matrix, an isolated A/B/A Test for seed 123, and multi-node GPU telemetry.
+
+1. **Pre-build on frontend** (compute-node compilation is strictly forbidden):
+   ```bash
+   ./build.sh all
+   ```
+2. **Submit Super Job**:
+   ```bash
+   qsub job_harmony_super.pbs
+   ```
+3. **Monitor job**:
+   ```bash
+   qstat -u $USER
+   ```
+4. **Artifacts generated in `results/variance_run_<JOBID>/`**:
+   - `SUPER_JOB_REPORT.md`: Markdown report with paired speedup ratios, dispersion analysis, and telemetry diagnostics.
+   - `super_matrix_summary.csv`: Aggregated per-sample wall times, loop durations, balance metrics, and boundary shifts.
+   - `super_matrix_paired.csv`: Paired comparison speedups (`erad` vs. `hwtopolb`) and repetition classification per seed.
+   - `hardware_telemetry.log`: Raw multi-node `nvidia-smi` telemetry snapshots.
+   - `hardware_telemetry.json`: Structured per-node and per-rank telemetry aggregated by `benchmarks/analyze_super_matrix.py`.
+   - `run_manifest.json`: Machine-readable manifest tracking every sample execution, seed schedule, and exit status.
+5. **Offline recovery command**:
+   Regenerate reports idempotently from raw CSVs and logs without re-running cluster workloads:
+   ```bash
+   python3 benchmarks/analyze_super_matrix.py --output-dir results/variance_run_<JOBID> --summarize-only
+   ```

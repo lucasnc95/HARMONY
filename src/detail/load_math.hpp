@@ -39,6 +39,19 @@ bool intersect_1d(std::size_t off1, std::size_t len1,
                   std::size_t off2, std::size_t len2,
                   std::size_t& out_off, std::size_t& out_len);
 
+// Per-partition throughput capacities (elements / seconds), optionally
+// scaled by memory_contention_factor. Returns total capacity across partitions.
+double compute_partition_capacities(
+    const std::vector<double>& times,
+    const std::vector<DevicePartition>& partitions,
+    const TopoMetrics* metrics,
+    bool use_contention_adjustment,
+    std::vector<double>& out_capacity);
+
+// Applies bounded uniform perturbation in [-perturbation_factor, +perturbation_factor]
+// to normalized shares and renormalizes to sum to 1.0.
+void perturb_shares(std::vector<double>& shares, float perturbation_factor, unsigned int seed);
+
 } // namespace harmony::detail
 
 #endif // HARMONY_DETAIL_LOAD_MATH_HPP

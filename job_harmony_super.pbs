@@ -1,0 +1,180 @@
+#!/bin/bash
+#PBS -N harmony_super
+#PBS -j oe
+#PBS -o harmony_super.out
+#PBS -l walltime=02:00:00
+#PBS -l select=1:ncpus=4:mpiprocs=1:mem=8gb:ngpus=1:vnode=compute-1-0[0]+1:ncpus=4:mpiprocs=1:mem=8gb:ngpus=1:vnode=compute-1-1[0]
+#PBS -l place=free
+
+set -euo pipefail
+
+# 1. Defensive PBS environment setup
+if [[ -z "${PBS_O_WORKDIR:-}" || -z "${PBS_NODEFILE:-}" ]]; then
+    echo "Error: PBS_O_WORKDIR and PBS_NODEFILE must be set by PBS" >&2
+    exit 1
+fi
+cd "$PBS_O_WORKDIR"
+HARMONY_ROOT="${HARMONY_ROOT:-$PBS_O_WORKDIR}"
+
+echo "=== Allocated MPI slots ==="
+cat "$PBS_NODEFILE"
+slot_count=$(wc -l < "$PBS_NODEFILE")
+if [[ "$slot_count" -ne 2 ]]; then
+    echo "Error: Expected exactly two PBS MPI slots, found: $slot_count" >&2
+    exit 1
+fi
+
+# LIMC / OpenHPC modules (never purge) and upstream PBS environment setup
+MODULES="${MODULES:-gnu13/13.2.0 openmpi5/5.0.5 prun/2.2}"
+LAUNCHER="${LAUNCHER:-prun}"
+# shellcheck disable=SC1091
+source "$HARMONY_ROOT/scripts/pbs/job_env.sh"
+
+read -r -a launcher_cmd <<< "$LAUNCHER"
+if [[ ${#launcher_cmd[@]} -eq 0 ]]; then
+    echo "Error: LAUNCHER must not be empty" >&2
+    exit 1
+fi
+
+echo "=== Toolchain ==="
+if command -v module >/dev/null 2>&1 || type module >/dev/null 2>&1; then
+    module list 2>&1 || true
+fi
+command -v "${launcher_cmd[0]}"
+
+# 2. Prebuilt binary verification (no compute-node compilation)
+bin_dir="$HARMONY_ROOT/bin"
+test_bin_dir="$HARMONY_ROOT/tests/bin"
+halo_bin="$test_bin_dir/test_async_halo_opencl"
+if [[ ! -x "$halo_bin" && -x "$bin_dir/test_async_halo_opencl" ]]; then
+    halo_bin="$bin_dir/test_async_halo_opencl"
+    test_bin_dir="$bin_dir"
+fi
+
+echo "=== Verifying Prebuilt Cluster Binaries ==="
+for binary_path in "$bin_dir/topo_probe" "$bin_dir/kneighbor" "$bin_dir/leanmd" "$halo_bin"; do
+    if [[ ! -x "$binary_path" ]]; then
+        echo "Error: Missing prebuilt binary: $binary_path" >&2
+        echo "Compiling on compute nodes is strictly forbidden. Build on frontend using: ./build.sh all" >&2
+        exit 1
+    fi
+done
+
+# 3. Per-rank GPU & MIG check via upstream rank_wrapper.sh
+rank_wrapper="$HARMONY_ROOT/scripts/pbs/rank_wrapper.sh"
+echo "=== Checking Per-Rank GPUs and MIG Status ==="
+if ! run_mpi "$rank_wrapper" --gpu-pin "${GPU_PIN:-}" --check-gpus -- true < /dev/null; then
+    echo "Error: Per-rank GPU / MIG verification failed; aborting before preflight." >&2
+    exit 1
+fi
+
+rank_prefix=("$rank_wrapper")
+if [[ -n "${GPU_PIN:-}" ]]; then
+    rank_prefix+=(--gpu-pin "$GPU_PIN")
+fi
+rank_prefix+=(--)
+
+# 4. Output directory isolation
+output_dir="$HARMONY_ROOT/results/variance_run_${PBS_JOBID:-manual_$(date +%Y%m%d_%H%M%S)}"
+mkdir -p "$output_dir"
+echo "=== Output Directory: $output_dir ==="
+
+# 5. Preflight Verification (shared 60s budget)
+echo "=== Preflight Verification ==="
+preflight_budget="${PREFLIGHT_BUDGET_SECONDS:-60}"
+preflight_deadline=$((SECONDS + preflight_budget))
+preflight_remaining() {
+    local remaining=$((preflight_deadline - SECONDS))
+    if [[ $remaining -lt 1 ]]; then
+        echo "Error: Preflight budget of ${preflight_budget}s exhausted before $1" >&2
+        exit 1
+    fi
+    echo "$remaining"
+}
+
+topo_stdout="$output_dir/topo_probe.stdout"
+remaining=$(preflight_remaining "topology probe")
+echo "Running topology probe (shared preflight budget: ${remaining}s of ${preflight_budget}s left)..."
+timeout "${remaining}s" "${launcher_cmd[@]}" "${rank_prefix[@]}" "$bin_dir/topo_probe" --output-json "$output_dir/topo_metrics_cluster.json" | tee "$topo_stdout"
+
+python3 - "$output_dir/topo_metrics_cluster.json" "$topo_stdout" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as source:
+        metrics = json.load(source)
+except Exception as e:
+    sys.stderr.write(f"Preflight error: Failed to parse topology metrics JSON: {e}\n")
+    sys.exit(1)
+
+if metrics.get("synthetic", True):
+    sys.stderr.write("Preflight error: Topo probe reported synthetic metrics\n")
+    sys.exit(1)
+
+if len(metrics.get("pcie_latency_ns", [])) != 2:
+    sys.stderr.write("Preflight error: Expected exactly two measured OpenCL GPUs\n")
+    sys.exit(1)
+
+if len(metrics.get("mpi_latency_ns", [])) != 4:
+    sys.stderr.write("Preflight error: Expected a four-entry MPI latency matrix\n")
+    sys.exit(1)
+
+counts = None
+with open(sys.argv[2], encoding="utf-8") as stdout_log:
+    for line in stdout_log:
+        if line.startswith("rank_device_counts="):
+            try:
+                counts = [int(v) for v in line.split("=", 1)[1].strip().split(",")]
+            except ValueError:
+                pass
+if counts is None:
+    sys.stderr.write("Preflight error: topo_probe did not report rank_device_counts; rebuild it with ./build.sh all\n")
+    sys.exit(1)
+if len(counts) != 2 or any(c != 1 for c in counts):
+    sys.stderr.write(f"Preflight error: per-rank OpenCL GPU counts must be exactly 1 on each of 2 ranks, got {counts}\n")
+    sys.exit(1)
+PY
+
+remaining=$(preflight_remaining "asynchronous halo test")
+echo "Running asynchronous OpenCL halo test (shared preflight budget: ${remaining}s of ${preflight_budget}s left)..."
+if ! timeout "${remaining}s" "${launcher_cmd[@]}" "${rank_prefix[@]}" "$halo_bin" --require-gpu --timeout-seconds "$remaining"; then
+    echo "ERROR: Asynchronous halo test preflight failed (requires at least 1 OpenCL GPU per rank)" >&2
+    exit 1
+fi
+
+# 6. Execution and post-processing
+bench_iterations="${BENCH_ITERATIONS:-100}"
+
+echo "=== Executing Super Matrix Benchmark ==="
+set +e
+bash "$HARMONY_ROOT/benchmarks/run_super_matrix.sh" \
+    --bin-dir "$bin_dir" \
+    --test-bin-dir "$test_bin_dir" \
+    --output-dir "$output_dir" \
+    --iterations "$bench_iterations" \
+    --launcher "$LAUNCHER" \
+    --skip-preflight
+runner_exit_code=$?
+set -e
+
+echo "=== Post-Processing and Generating Report ==="
+set +e
+python3 "$HARMONY_ROOT/benchmarks/analyze_super_matrix.py" \
+    --output-dir "$output_dir" \
+    --iterations "$bench_iterations"
+analyzer_exit_code=$?
+set -e
+
+if [[ $runner_exit_code -ne 0 || $analyzer_exit_code -ne 0 ]]; then
+    if [[ $runner_exit_code -ne 0 ]]; then
+        echo "Error: Super Matrix execution reported sample failure(s) (exit code: $runner_exit_code)" >&2
+    fi
+    if [[ $analyzer_exit_code -ne 0 ]]; then
+        echo "Error: Super Matrix post-processing analyzer failed (exit code: $analyzer_exit_code)" >&2
+    fi
+    exit 1
+fi
+
+echo "=== Super Job completed successfully ==="
+exit 0

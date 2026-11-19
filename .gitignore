@@ -2,3 +2,9 @@ job_dcl.out
 gmon.out
 gabarito.out
 teste_250.out
+build/
+lib/
+bin/
+examples/*/bin/
+tests/bin/
+tests/build/

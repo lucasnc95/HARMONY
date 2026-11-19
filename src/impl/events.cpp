@@ -83,6 +83,17 @@ void Runtime::Impl::track_transfer_event(std::size_t d, cl_event ev) {
 // still running. Busy times are unions of the profiled intervals, so
 // commands running at the same time are not counted twice.
 void Runtime::Impl::update_balance_window_events(bool wait) {
+    if (wait) {
+        for (detail::LocalDevice& ld : local_devices_) {
+            for (cl_command_queue q : ld.kernel_queues) {
+                if (q != nullptr) detail::check_cl(clFlush(q), "clFlush(statistics kernel queue)");
+            }
+            if (ld.transfer_queue != nullptr) {
+                detail::check_cl(clFlush(ld.transfer_queue), "clFlush(statistics transfer queue)");
+            }
+        }
+    }
+
     struct Interval {
         double start;
         double end;
@@ -192,20 +203,24 @@ void Runtime::Impl::synchronize_all_local_devices(bool force_finish) {
             if (q != nullptr) detail::check_cl(clFinish(q), "clFinish");
         }
     } else {
-        std::vector<cl_event> markers;
+        detail::ScopedEventList markers;
+        markers.reserve(queues.size());
         for (cl_command_queue q : queues) {
             if (q == nullptr) continue;
-            cl_event ev = nullptr;
+            detail::ScopedEvent ev;
 #if CL_TARGET_OPENCL_VERSION >= 120
-            detail::check_cl(clEnqueueMarkerWithWaitList(q, 0, nullptr, &ev), "enqueue marker");
+            detail::check_cl(clEnqueueMarkerWithWaitList(q, 0, nullptr, ev.out_ptr()), "enqueue marker");
 #else
-            detail::check_cl(clEnqueueMarker(q, &ev), "enqueue marker");
+            detail::check_cl(clEnqueueMarker(q, ev.out_ptr()), "enqueue marker");
 #endif
-            markers.push_back(ev);
+            markers.push_back(std::move(ev));
+            detail::check_cl(clFlush(q), "clFlush(queue marker)");
         }
-        for (cl_event ev : markers) {
-            detail::check_cl(clWaitForEvents(1, &ev), "clWaitForEvents(queue marker)");
-            clReleaseEvent(ev);
+        for (detail::ScopedEvent& ev : markers) {
+            if (!ev) continue;
+            cl_event raw = ev.get();
+            detail::check_cl(clWaitForEvents(1, &raw), "clWaitForEvents(queue marker)");
+            ev.reset();
         }
     }
 

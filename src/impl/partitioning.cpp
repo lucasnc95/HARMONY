@@ -26,22 +26,24 @@ void Runtime::Impl::set_partition(const PartitionSpec& spec) {
 // Global devices are numbered rank by rank, so the owner of global device g
 // is found by walking the per-rank device counts.
 int Runtime::Impl::owner_rank_of_global_device(int g) const {
+    const int n_ranks = size();
     int acc = 0;
-    for (int r = 0; r < size_; ++r) {
-        if (g < acc + all_device_counts_[r]) return r;
-        acc += all_device_counts_[r];
+    for (int r = 0; r < n_ranks && static_cast<std::size_t>(r) < all_device_counts_.size(); ++r) {
+        if (g < acc + all_device_counts_[static_cast<std::size_t>(r)]) return r;
+        acc += all_device_counts_[static_cast<std::size_t>(r)];
     }
-    return size_ - 1;
+    return n_ranks - 1;
 }
 
 // Local index of global device g on this rank, or -1 if another rank owns it.
 int Runtime::Impl::local_index_of_global_device(int g) const {
+    const int n_ranks = size();
     int acc = 0;
-    for (int r = 0; r < size_; ++r) {
-        if (g < acc + all_device_counts_[r]) {
+    for (int r = 0; r < n_ranks && static_cast<std::size_t>(r) < all_device_counts_.size(); ++r) {
+        if (g < acc + all_device_counts_[static_cast<std::size_t>(r)]) {
             return (r == rank_) ? (g - acc) : -1;
         }
-        acc += all_device_counts_[r];
+        acc += all_device_counts_[static_cast<std::size_t>(r)];
     }
     return -1;
 }
@@ -80,7 +82,8 @@ void Runtime::Impl::rebuild_partitions_equal_like_wrapper() {
     }
 }
 
-std::vector<DevicePartition> Runtime::Impl::partitions_from_loads(const std::vector<float>& loads) const {
+std::vector<DevicePartition> Runtime::Impl::partitions_from_loads(const std::vector<float>& loads,
+                                                                  bool allow_empty) const {
     std::vector<DevicePartition> out;
     if (!partition_.has_value() || loads.empty()) return out;
 
@@ -101,7 +104,7 @@ std::vector<DevicePartition> Runtime::Impl::partitions_from_loads(const std::vec
     std::vector<std::size_t> cuts(parts + 1, 0);
 
     if ((n % gran) == 0 && (n / gran) >= parts) {
-        // Work in granularity units and keep at least one unit per partition.
+        // Work in granularity units; keep >= 1 unit per partition unless empty partitions are allowed.
         const std::size_t total_units = n / gran;
         std::vector<std::size_t> unit_cuts(parts + 1, 0);
 
@@ -109,8 +112,8 @@ std::vector<DevicePartition> Runtime::Impl::partitions_from_loads(const std::vec
             const double raw = static_cast<double>(cumulative[i]) * static_cast<double>(total_units);
             std::size_t cut = static_cast<std::size_t>(std::llround(raw));
 
-            const std::size_t min_cut = unit_cuts[i] + 1;
-            const std::size_t max_cut = total_units - (parts - (i + 1));
+            const std::size_t min_cut = allow_empty ? unit_cuts[i] : (unit_cuts[i] + 1);
+            const std::size_t max_cut = allow_empty ? total_units : (total_units - (parts - (i + 1)));
             cut = std::clamp(cut, min_cut, max_cut);
             unit_cuts[i + 1] = cut;
         }

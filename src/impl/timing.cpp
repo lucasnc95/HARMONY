@@ -26,6 +26,18 @@ namespace {
 
 int index_of(Phase p) { return static_cast<int>(p); }
 
+const char* balance_mode_label(BalanceMode mode) noexcept {
+    switch (mode) {
+        case BalanceMode::off: return "off";
+        case BalanceMode::static_threshold: return "static threshold";
+        case BalanceMode::dynamic_threshold: return "dynamic threshold";
+        case BalanceMode::static_profiled: return "static profiled";
+        case BalanceMode::dynamic_profiled: return "dynamic profiled";
+        case BalanceMode::hierarchical: return "hierarchical";
+    }
+    return "unknown";
+}
+
 // Attempts listed in the summary; beyond this only the applied ones.
 constexpr std::size_t kMaxSummaryRows = 30;
 // Changes shown in the table of shares over time.
@@ -144,7 +156,9 @@ double Runtime::Impl::stop_timing() {
 // Printed once, the first time a step with balancing runs.
 void Runtime::Impl::print_balance_policy(const AutoBalancePolicy& policy) {
     if (!verbose_ || rank_ != 0) return;
-    const bool is_dynamic = policy.mode == BalanceMode::dynamic_threshold ||
+    const bool is_hierarchical = policy.mode == BalanceMode::hierarchical;
+    const bool is_dynamic = is_hierarchical ||
+                            policy.mode == BalanceMode::dynamic_threshold ||
                             policy.mode == BalanceMode::dynamic_profiled;
     const bool is_threshold = policy.mode == BalanceMode::dynamic_threshold ||
                               policy.mode == BalanceMode::static_threshold;
@@ -152,8 +166,22 @@ void Runtime::Impl::print_balance_policy(const AutoBalancePolicy& policy) {
     const int warmup = std::max(0, policy.warmup);
 
     std::ostringstream out;
-    out << "[HARMONY] Load balancing: " << (is_dynamic ? "dynamic " : "static ")
-        << (is_threshold ? "threshold" : "profiled") << "\n          ";
+    out << "[HARMONY] Load balancing: " << balance_mode_label(policy.mode);
+    out << " (algorithm: " << (policy.algorithm == BalanceAlgorithm::hwtopolb ? "hwtopolb" : "erad");
+    if (policy.algorithm == BalanceAlgorithm::hwtopolb) {
+        out << ", perturbation=" << detail::format_number(policy.perturbation_factor, 4)
+            << ", seed=" << policy.seed;
+    }
+    if (policy.use_contention_adjustment) {
+        out << ", contention=on";
+    }
+    if (policy.use_power_cap) {
+        out << ", power_cap=on";
+        if (policy.power_budget_watts > 0.0) {
+            out << ", budget=" << detail::format_number(policy.power_budget_watts, 1) << "W";
+        }
+    }
+    out << ")\n          ";
     if (warmup > 0) {
         out << "Warm-up probe at iteration " << detail::format_count(static_cast<std::size_t>(warmup))
             << " (adjusts the initial division; not a balancing attempt).\n          ";
@@ -168,7 +196,9 @@ void Runtime::Impl::print_balance_policy(const AutoBalancePolicy& policy) {
     }
     out << "\n          Each one measures the iterations since the previous one and proposes shares proportional\n"
         << "          to the speed of each device; ";
-    if (is_threshold) {
+    if (is_hierarchical) {
+        out << "equalizes locally within each rank and applies inter-node migration only when gain >= 5%.\n";
+    } else if (is_threshold) {
         out << "the new division is applied when it changes by at least " << detail::format_number(policy.threshold, 4)
             << " (L2 distance of the cumulative loads).\n";
     } else {
@@ -192,8 +222,25 @@ void Runtime::Impl::print_balance_interval_metrics(BalanceRecord record) {
         std::ostringstream out;
         out << "[HARMONY] " << (record.warmup_probe ? std::string("Warm-up probe") : "Balance #" + std::to_string(record.number))
             << " | iteration " << detail::format_count(record.iteration)
-            << " | " << record.policy << " | " << (record.applied ? "CHANGED the division" : "kept the division")
+            << " | " << record.policy << " (" << record.algorithm << ")"
+            << " | " << (record.applied ? "CHANGED the division" : "kept the division")
             << "\n" << pad << "Why: " << record.reason << "\n";
+        if (record.contention_adjusted || record.power_capped || record.algorithm == "hwtopolb") {
+            out << pad << "Controls: algorithm=" << record.algorithm;
+            if (record.algorithm == "hwtopolb") {
+                out << ", perturbation=" << detail::format_number(record.perturbation_factor, 4)
+                    << ", seed=" << record.seed;
+            }
+            if (record.contention_adjusted) out << ", contention=adjusted";
+            if (record.power_capped) {
+                out << ", power_cap=active";
+                if (record.power_budget_watts > 0.0) {
+                    out << " (budget=" << detail::format_number(record.power_budget_watts, 1) << "W)";
+                }
+                out << ", throttle=" << detail::format_number(record.throttle_factor, 4);
+            }
+            out << "\n";
+        }
 
         const std::size_t devices = record.elements_after.size();
         const bool measured = record.window_iterations > 0 && record.window_seconds.size() == devices;
@@ -270,7 +317,7 @@ TimingReport Runtime::Impl::timing_report() {
 
     // ---- Processes: phase times and host name of every rank -----------------
     constexpr int kPhases = static_cast<int>(Phase::count);
-    std::vector<double> all_phases(static_cast<std::size_t>(kPhases) * size_);
+    std::vector<double> all_phases(static_cast<std::size_t>(kPhases) * mpi_size_);
     detail::check_mpi(MPI_Allgather(seconds.data(), kPhases, MPI_DOUBLE, all_phases.data(), kPhases, MPI_DOUBLE,
                                     comm_),
                       "MPI_Allgather(phase times)");
@@ -278,12 +325,12 @@ TimingReport Runtime::Impl::timing_report() {
     char host[MPI_MAX_PROCESSOR_NAME] = {};
     int host_len = 0;
     MPI_Get_processor_name(host, &host_len);
-    std::vector<char> hosts(static_cast<std::size_t>(MPI_MAX_PROCESSOR_NAME) * size_);
+    std::vector<char> hosts(static_cast<std::size_t>(MPI_MAX_PROCESSOR_NAME) * mpi_size_);
     detail::check_mpi(MPI_Allgather(host, MPI_MAX_PROCESSOR_NAME, MPI_CHAR, hosts.data(), MPI_MAX_PROCESSOR_NAME,
                                     MPI_CHAR, comm_),
                       "MPI_Allgather(host names)");
 
-    for (int r = 0; r < size_; ++r) {
+    for (int r = 0; r < mpi_size_; ++r) {
         const double* p = &all_phases[static_cast<std::size_t>(r) * kPhases];
         RankReport rr;
         rr.rank = r;
@@ -305,40 +352,74 @@ TimingReport Runtime::Impl::timing_report() {
     }
 
     // ---- Devices: {global index, compute, active} from every rank -----------
-    std::vector<double> local_dev;
-    for (std::size_t d = 0; d < local_devices_.size(); ++d) {
-        local_dev.push_back(static_cast<double>(local_devices_[d].global_index));
-        local_dev.push_back(kernel_busy[d]);
-        local_dev.push_back(active_busy[d]);
-    }
-    std::vector<int> counts(size_), displs(size_);
-    int total = 0;
-    for (int r = 0; r < size_; ++r) {
-        counts[r] = all_device_counts_.empty() ? 0 : all_device_counts_[r] * 3;
-        displs[r] = total;
-        total += counts[r];
-    }
-    std::vector<double> all_dev(static_cast<std::size_t>(total));
-    detail::check_mpi(MPI_Allgatherv(local_dev.data(), static_cast<int>(local_dev.size()), MPI_DOUBLE,
-                                     all_dev.data(), counts.data(), displs.data(), MPI_DOUBLE, comm_),
-                      "MPI_Allgatherv(device times)");
-
-    for (std::size_t i = 0; i + 2 < all_dev.size(); i += 3) {
-        DeviceReport dr;
-        dr.global_index = static_cast<int>(all_dev[i]);
-        dr.compute_seconds = all_dev[i + 1];
-        dr.transfer_seconds = std::max(0.0, all_dev[i + 2] - all_dev[i + 1]);
-        dr.idle_seconds = std::max(0.0, wall - all_dev[i + 2]);
+    if (local_devices_.empty() && simulated_ranks_ > 0 && simulated_ranks_ != mpi_size_) {
         for (const DeviceInfo& info : global_devices_) {
-            if (info.global_index != dr.global_index) continue;
+            DeviceReport dr;
+            dr.global_index = info.global_index;
             dr.rank = info.rank;
             dr.name = info.name;
             dr.kind = info.kind;
+            if (info.rank == rank_ && info.local_index >= 0 &&
+                static_cast<std::size_t>(info.local_index) < kernel_busy.size() &&
+                static_cast<std::size_t>(info.local_index) < active_busy.size()) {
+                const std::size_t li = static_cast<std::size_t>(info.local_index);
+                dr.compute_seconds = kernel_busy[li];
+                dr.transfer_seconds = std::max(0.0, active_busy[li] - kernel_busy[li]);
+                dr.idle_seconds = std::max(0.0, wall - active_busy[li]);
+            } else {
+                dr.idle_seconds = wall;
+            }
+            for (const DevicePartition& p : partitions_) {
+                if (p.device_global_index == dr.global_index) dr.elements = p.element_count;
+            }
+            report.devices.push_back(dr);
         }
-        for (const DevicePartition& p : partitions_) {
-            if (p.device_global_index == dr.global_index) dr.elements = p.element_count;
+    } else {
+        std::vector<double> local_dev;
+        if (!local_devices_.empty()) {
+            for (std::size_t d = 0; d < local_devices_.size(); ++d) {
+                local_dev.push_back(static_cast<double>(local_devices_[d].global_index));
+                local_dev.push_back(d < kernel_busy.size() ? kernel_busy[d] : 0.0);
+                local_dev.push_back(d < active_busy.size() ? active_busy[d] : 0.0);
+            }
+        } else {
+            for (std::size_t d = 0; d < devices_.size(); ++d) {
+                local_dev.push_back(static_cast<double>(devices_[d].global_index));
+                local_dev.push_back(d < kernel_busy.size() ? kernel_busy[d] : 0.0);
+                local_dev.push_back(d < active_busy.size() ? active_busy[d] : 0.0);
+            }
         }
-        report.devices.push_back(dr);
+        std::vector<int> counts(mpi_size_), displs(mpi_size_);
+        int total = 0;
+        for (int r = 0; r < mpi_size_; ++r) {
+            counts[r] = (all_device_counts_.size() == static_cast<std::size_t>(mpi_size_))
+                            ? all_device_counts_[static_cast<std::size_t>(r)] * 3
+                            : 0;
+            displs[r] = total;
+            total += counts[r];
+        }
+        std::vector<double> all_dev(static_cast<std::size_t>(total));
+        detail::check_mpi(MPI_Allgatherv(local_dev.data(), static_cast<int>(local_dev.size()), MPI_DOUBLE,
+                                         all_dev.data(), counts.data(), displs.data(), MPI_DOUBLE, comm_),
+                          "MPI_Allgatherv(device times)");
+
+        for (std::size_t i = 0; i + 2 < all_dev.size(); i += 3) {
+            DeviceReport dr;
+            dr.global_index = static_cast<int>(all_dev[i]);
+            dr.compute_seconds = all_dev[i + 1];
+            dr.transfer_seconds = std::max(0.0, all_dev[i + 2] - all_dev[i + 1]);
+            dr.idle_seconds = std::max(0.0, wall - all_dev[i + 2]);
+            for (const DeviceInfo& info : global_devices_) {
+                if (info.global_index != dr.global_index) continue;
+                dr.rank = info.rank;
+                dr.name = info.name;
+                dr.kind = info.kind;
+            }
+            for (const DevicePartition& p : partitions_) {
+                if (p.device_global_index == dr.global_index) dr.elements = p.element_count;
+            }
+            report.devices.push_back(dr);
+        }
     }
 
     // ---- Critical path: the process of the slowest device ---------------------
@@ -390,14 +471,26 @@ void Runtime::Impl::print_timing_report(std::ostream& os) {
     out << "\nMPI processes: " << r.ranks.size() << "    Devices: " << r.devices.size() << "\n";
     if (balance_policy_) {
         const AutoBalancePolicy& p = *balance_policy_;
-        const bool is_dynamic = p.mode == BalanceMode::dynamic_threshold || p.mode == BalanceMode::dynamic_profiled;
-        const bool is_threshold = p.mode == BalanceMode::dynamic_threshold || p.mode == BalanceMode::static_threshold;
+        const bool is_hierarchical = p.mode == BalanceMode::hierarchical;
+        const bool is_dynamic = is_hierarchical ||
+                                p.mode == BalanceMode::dynamic_threshold ||
+                                p.mode == BalanceMode::dynamic_profiled;
+        const bool is_threshold = p.mode == BalanceMode::dynamic_threshold ||
+                                  p.mode == BalanceMode::static_threshold;
         const int interval = std::max(1, p.interval);
-        out << "Load balancing: " << (is_dynamic ? "dynamic " : "static ") << (is_threshold ? "threshold" : "profiled")
+        out << "Load balancing: " << balance_mode_label(p.mode)
+            << ", algorithm " << (p.algorithm == BalanceAlgorithm::hwtopolb ? "hwtopolb" : "erad")
             << ", warm-up probe at " << (p.warmup > 0 ? detail::format_count(static_cast<std::size_t>(p.warmup)) : "-")
             << ", interval " << detail::format_count(static_cast<std::size_t>(interval))
             << (is_dynamic ? "" : " (single attempt)");
         if (is_threshold) out << ", threshold " << detail::format_number(p.threshold, 4);
+        if (p.use_contention_adjustment) out << ", contention adjustment";
+        if (p.use_power_cap) {
+            out << ", power cap";
+            if (p.power_budget_watts > 0.0) {
+                out << " (" << detail::format_number(p.power_budget_watts, 1) << " W)";
+            }
+        }
         out << "\n";
     } else {
         out << "Load balancing: off\n";
@@ -672,12 +765,15 @@ void Runtime::Impl::write_timing_report(const std::string& path) {
     }
 
     out << "#balance,number,iteration,policy,applied,iteration_s_before,iteration_s_after,bytes_moved,"
-           "migration_s,decision_s,warmup_probe,reason\n";
+           "migration_s,decision_s,warmup_probe,reason,algorithm,perturbation_factor,seed,"
+           "contention_adjusted,power_capped,power_budget_watts,throttle_factor\n";
     for (const BalanceRecord& b : r.balance) {
         out << "balance," << b.number << "," << b.iteration << "," << clean(b.policy) << "," << (b.applied ? 1 : 0)
             << "," << b.iteration_seconds_before << "," << b.iteration_seconds_after << "," << b.bytes_moved << ","
             << b.migration_seconds << "," << b.decision_seconds << "," << (b.warmup_probe ? 1 : 0) << ","
-            << clean(b.reason) << "\n";
+            << clean(b.reason) << "," << clean(b.algorithm) << "," << b.perturbation_factor << "," << b.seed << ","
+            << (b.contention_adjusted ? 1 : 0) << "," << (b.power_capped ? 1 : 0) << ","
+            << b.power_budget_watts << "," << b.throttle_factor << "\n";
     }
 }
 
