@@ -9,10 +9,132 @@
 
 #include <cstddef>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace harmony::detail {
+
+// RAII wrapper for OpenCL C handles (and testable with mock handles).
+template <typename Handle, typename ReleaseFn>
+class ScopedHandle {
+public:
+    ScopedHandle() = default;
+    explicit ScopedHandle(Handle handle, ReleaseFn release = ReleaseFn{}) noexcept
+        : handle_(handle), release_(std::move(release)) {}
+    ~ScopedHandle() { reset(); }
+
+    ScopedHandle(const ScopedHandle&) = delete;
+    ScopedHandle& operator=(const ScopedHandle&) = delete;
+
+    ScopedHandle(ScopedHandle&& other) noexcept
+        : handle_(std::exchange(other.handle_, Handle{})),
+          release_(std::move(other.release_)) {}
+
+    ScopedHandle& operator=(ScopedHandle&& other) noexcept {
+        if (this != &other) {
+            reset();
+            handle_ = std::exchange(other.handle_, Handle{});
+            release_ = std::move(other.release_);
+        }
+        return *this;
+    }
+
+    Handle get() const noexcept { return handle_; }
+
+    Handle* out_ptr() noexcept {
+        reset();
+        return &handle_;
+    }
+
+    explicit operator bool() const noexcept { return handle_ != Handle{}; }
+
+    Handle release() noexcept { return std::exchange(handle_, Handle{}); }
+
+    void reset(Handle next = Handle{}) noexcept {
+        if (handle_ != Handle{}) {
+            release_(handle_);
+        }
+        handle_ = next;
+    }
+
+private:
+    Handle handle_{};
+    ReleaseFn release_{};
+};
+
+struct EventRelease {
+    void operator()(cl_event ev) const noexcept { clReleaseEvent(ev); }
+};
+
+struct BufferRelease {
+    void operator()(cl_mem mem) const noexcept { clReleaseMemObject(mem); }
+};
+
+struct ProgramRelease {
+    void operator()(cl_program prog) const noexcept { clReleaseProgram(prog); }
+};
+
+struct KernelRelease {
+    void operator()(cl_kernel k) const noexcept { clReleaseKernel(k); }
+};
+
+struct ContextRelease {
+    void operator()(cl_context ctx) const noexcept { clReleaseContext(ctx); }
+};
+
+struct QueueRelease {
+    void operator()(cl_command_queue q) const noexcept { clReleaseCommandQueue(q); }
+};
+
+struct SubDeviceRelease {
+    void operator()(cl_device_id dev) const noexcept {
+#if CL_TARGET_OPENCL_VERSION >= 120
+        if (dev != nullptr) clReleaseDevice(dev);
+#else
+        (void)dev;
+#endif
+    }
+};
+
+using ScopedEvent = ScopedHandle<cl_event, EventRelease>;
+using ScopedBuffer = ScopedHandle<cl_mem, BufferRelease>;
+using ScopedProgram = ScopedHandle<cl_program, ProgramRelease>;
+using ScopedKernel = ScopedHandle<cl_kernel, KernelRelease>;
+using ScopedContext = ScopedHandle<cl_context, ContextRelease>;
+using ScopedQueue = ScopedHandle<cl_command_queue, QueueRelease>;
+using ScopedSubDevice = ScopedHandle<cl_device_id, SubDeviceRelease>;
+using ScopedEventList = std::vector<ScopedEvent>;
+using ScopedBufferList = std::vector<ScopedBuffer>;
+
+template <typename Fn>
+class ScopeExit {
+public:
+    explicit ScopeExit(Fn&& fn) noexcept(std::is_nothrow_move_constructible_v<Fn>)
+        : fn_(std::move(fn)) {}
+
+    ScopeExit(ScopeExit&& other) noexcept(std::is_nothrow_move_constructible_v<Fn>)
+        : fn_(std::move(other.fn_)), active_(std::exchange(other.active_, false)) {}
+
+    ScopeExit(const ScopeExit&) = delete;
+    ScopeExit& operator=(const ScopeExit&) = delete;
+    ScopeExit& operator=(ScopeExit&&) = delete;
+
+    ~ScopeExit() {
+        if (active_) fn_();
+    }
+
+    void dismiss() noexcept { active_ = false; }
+
+private:
+    Fn fn_;
+    bool active_{true};
+};
+
+template <typename Fn>
+ScopeExit<std::decay_t<Fn>> make_scope_exit(Fn&& fn) {
+    return ScopeExit<std::decay_t<Fn>>(std::forward<Fn>(fn));
+}
 
 // One OpenCL context per platform, shared by the selected devices of it.
 struct PlatformContext {

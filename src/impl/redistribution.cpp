@@ -35,7 +35,7 @@ void Runtime::Impl::rebalance_to(const std::vector<float>& loads) {
     cumulative.back() = 1.0f;
 
     const std::vector<DevicePartition> old_parts = partitions_;
-    const std::vector<DevicePartition> new_parts = partitions_from_loads(cumulative);
+    const std::vector<DevicePartition> new_parts = partitions_from_loads(cumulative, /*allow_empty=*/true);
     if (new_parts.size() != old_parts.size()) {
         throw Error("rebalance_to(): rounded partition count mismatch");
     }
@@ -43,6 +43,7 @@ void Runtime::Impl::rebalance_to(const std::vector<float>& loads) {
     BalanceRecord record;
     record.iteration = iteration_counter_;
     record.policy = "manual";
+    record.algorithm = "manual";
     for (const DevicePartition& p : old_parts) record.elements_before.push_back(p.element_count);
 
     if (detail::same_partition_layout(old_parts, new_parts)) {
@@ -71,15 +72,25 @@ std::vector<FieldHandle> Runtime::Impl::all_field_handles() const {
 void Runtime::Impl::apply_partitions(const std::vector<FieldHandle>& fields,
                                      const std::vector<DevicePartition>& old_parts,
                                      const std::vector<DevicePartition>& new_parts,
-                                     BalanceRecord& record) {
+                                     BalanceRecord& record,
+                                     bool synchronize_ranks) {
     PhaseTimer timer(*this, Phase::migration);
     const double t0 = MPI_Wtime();
 
-    synchronize_untimed(true);
-    redistribute_selected_registered_fields(fields, old_parts, new_parts);
+    auto sync_devices_or_ranks = [&]() {
+        if (synchronize_ranks) {
+            synchronize_untimed(true);
+        } else {
+            PhaseTimer wait_timer(*this, Phase::device_wait);
+            synchronize_all_local_devices(true);
+        }
+    };
+
+    sync_devices_or_ranks();
+    redistribute_selected_registered_fields(fields, old_parts, new_parts, synchronize_ranks);
     partitions_ = new_parts;
     current_loads_ = loads_from_partitions(partitions_);
-    synchronize_untimed(true);
+    sync_devices_or_ranks();
     reset_balance_window_events();
 
     // Partition borders moved: every ghost region now holds old data.
@@ -115,11 +126,14 @@ std::size_t Runtime::Impl::bytes_moved(const std::vector<FieldHandle>& fields,
 // Only proportional fields are moved (none = replicated, total = reserved).
 void Runtime::Impl::redistribute_selected_registered_fields(const std::vector<FieldHandle>& fields,
                                         const std::vector<DevicePartition>& old_parts,
-                                        const std::vector<DevicePartition>& new_parts) {
+                                        const std::vector<DevicePartition>& new_parts,
+                                        bool synchronize_ranks) {
     for (FieldHandle fh : unique_existing_proportional_fields(fields)) {
         redistribute_field_intersection(fh, old_parts, new_parts);
-        PhaseTimer timer(*this, Phase::mpi_migration);
-        detail::check_mpi(MPI_Barrier(comm_), "MPI_Barrier(redistribute field)");
+        if (synchronize_ranks) {
+            PhaseTimer timer(*this, Phase::mpi_migration);
+            detail::check_mpi(MPI_Barrier(comm_), "MPI_Barrier(redistribute field)");
+        }
     }
 }
 
@@ -129,6 +143,9 @@ void Runtime::Impl::redistribute_field_intersection(FieldHandle fh,
                                        const std::vector<DevicePartition>& old_parts,
                                        const std::vector<DevicePartition>& new_parts) {
     detail::RegisteredField& rf = field_or_throw(fh, "redistribute_field_intersection()");
+    if (local_devices_.empty()) {
+        return;
+    }
     const std::size_t elem_bytes = rf.element_bytes();
     const std::size_t total_bytes = rf.total_bytes();
 
@@ -173,14 +190,16 @@ void Runtime::Impl::redistribute_field_intersection(FieldHandle fh,
 
                 if (src_here && src.local_index >= 0) {
                     const std::size_t d = replica_or_throw(src.local_index, "source");
-                    cl_event read_ev = nullptr;
+                    detail::ScopedEvent read_ev;
                     detail::check_cl(
                         clEnqueueReadBuffer(local_devices_[d].transfer_queue, rf.replicas[d], CL_FALSE,
-                                            chunk_off, chunk_len, chunk.data(), 0, nullptr, &read_ev),
+                                            chunk_off, chunk_len, chunk.data(), 0, nullptr, read_ev.out_ptr()),
                         "clEnqueueReadBuffer(redistribute read)");
-                    detail::check_cl(clWaitForEvents(1, &read_ev), "clWaitForEvents(redistribute read)");
-                    track_transfer_event(d, read_ev);
-                    clReleaseEvent(read_ev);
+                    detail::check_cl(clFlush(local_devices_[d].transfer_queue),
+                                     "clFlush(redistribute read)");
+                    cl_event raw_read = read_ev.get();
+                    detail::check_cl(clWaitForEvents(1, &raw_read), "clWaitForEvents(redistribute read)");
+                    track_transfer_event(d, raw_read);
                 }
 
                 if (!(src_here && dst_here)) {
@@ -195,14 +214,19 @@ void Runtime::Impl::redistribute_field_intersection(FieldHandle fh,
 
                 if (dst_here && dst.local_index >= 0) {
                     const std::size_t d = replica_or_throw(dst.local_index, "destination");
-                    cl_event write_ev = nullptr;
+                    detail::ScopedEvent write_ev;
                     detail::check_cl(
-                        clEnqueueWriteBuffer(local_devices_[d].transfer_queue, rf.replicas[d], CL_TRUE,
-                                             chunk_off, chunk_len, chunk.data(), 0, nullptr, &write_ev),
+                        clEnqueueWriteBuffer(local_devices_[d].transfer_queue, rf.replicas[d], CL_FALSE,
+                                             chunk_off, chunk_len, chunk.data(), 0, nullptr, write_ev.out_ptr()),
                         src_here ? "clEnqueueWriteBuffer(redistribute local)"
                                  : "clEnqueueWriteBuffer(redistribute remote)");
-                    track_transfer_event(d, write_ev);
-                    clReleaseEvent(write_ev);
+                    detail::check_cl(clFlush(local_devices_[d].transfer_queue),
+                                     "clFlush(redistribute write)");
+                    cl_event raw_write = write_ev.get();
+                    detail::check_cl(clWaitForEvents(1, &raw_write),
+                                     src_here ? "clWaitForEvents(redistribute local)"
+                                              : "clWaitForEvents(redistribute remote)");
+                    track_transfer_event(d, raw_write);
                 }
             }
         }

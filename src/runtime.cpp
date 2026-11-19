@@ -62,6 +62,31 @@ void Runtime::print_timing_report(std::ostream& os) { impl_->print_timing_report
 void Runtime::write_timing_report(const std::string& path) { impl_->write_timing_report(path); }
 void Runtime::set_verbose(bool verbose) { impl_->set_verbose(verbose); }
 
+void Runtime::set_topo_metrics(const TopoMetrics& metrics) { impl_->set_topo_metrics(metrics); }
+const std::optional<TopoMetrics>& Runtime::topo_metrics() const noexcept { return impl_->topo_metrics(); }
+void Runtime::set_numa_cost_gain_ratio_threshold(double threshold) noexcept {
+    impl_->set_numa_cost_gain_ratio_threshold(threshold);
+}
+double Runtime::numa_cost_gain_ratio_threshold() const noexcept {
+    return impl_->numa_cost_gain_ratio_threshold();
+}
+
+void Runtime::set_simulated_devices_count(int count) noexcept {
+    impl_->set_simulated_devices_count(count);
+}
+
+void Runtime::set_simulated_ranks_for_testing(int ranks) noexcept {
+    impl_->set_simulated_ranks_for_testing(ranks);
+}
+
+void Runtime::set_simulated_times(const std::vector<double>& times) noexcept {
+    impl_->set_simulated_times(times);
+}
+
+void Runtime::clear_simulated_times() noexcept {
+    impl_->clear_simulated_times();
+}
+
 // ---------------------------------------------------------------------------
 // KernelBindingBuilder
 // ---------------------------------------------------------------------------

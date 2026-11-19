@@ -33,6 +33,9 @@ FieldHandle Runtime::Impl::create_field(const FieldSpec& spec) {
     const std::size_t total_bytes = rf.total_bytes();
     const cl_mem_flags flags = detail::to_opencl_flags(spec.usage);
 
+    detail::ScopedBufferList guarded_replicas;
+    guarded_replicas.reserve(local_devices_.size());
+
     for (std::size_t d = 0; d < local_devices_.size(); ++d) {
         // Every device keeps the whole field in ONE buffer, so the field must
         // fit in the device's largest buffer (on NVIDIA usually 1/4 of the memory).
@@ -44,18 +47,35 @@ FieldHandle Runtime::Impl::create_field(const FieldSpec& spec) {
                       << "; the allocation may fail (reduce the mesh)" << std::endl;
         }
         cl_int err = CL_SUCCESS;
-        rf.replicas[d] = clCreateBuffer(ld.context, flags, total_bytes, nullptr, &err);
-        if (err != CL_SUCCESS) {
+        detail::ScopedBuffer buf(clCreateBuffer(ld.context, flags, total_bytes, nullptr, &err));
+        if (err != CL_SUCCESS || !buf) {
             throw Error("clCreateBuffer(create_field): field '" + spec.name + "' of " +
                         detail::format_bytes(total_bytes) + " on " + ld.name + " failed with OpenCL error " +
                         std::to_string(err) + " (device memory " +
                         detail::format_bytes(static_cast<std::size_t>(ld.global_memory)) + ", largest buffer " +
                         detail::format_bytes(static_cast<std::size_t>(ld.max_buffer)) + ")");
         }
+        guarded_replicas.push_back(std::move(buf));
     }
 
-    fields_.emplace(h.value, std::move(rf));
+    auto [it, inserted] = fields_.emplace(h.value, std::move(rf));
+    (void)inserted;
+    auto rollback = detail::make_scope_exit([&]() {
+        auto fit = fields_.find(h.value);
+        if (fit != fields_.end()) {
+            for (cl_mem mem : fit->second.replicas) {
+                if (mem != nullptr) clReleaseMemObject(mem);
+            }
+            fields_.erase(fit);
+        }
+    });
+
+    for (std::size_t d = 0; d < local_devices_.size(); ++d) {
+        it->second.replicas[d] = guarded_replicas[d].release();
+    }
+
     if (spec.host_ptr != nullptr) write_initial_field_data(h, spec.host_ptr);
+    rollback.dismiss();
     return h;
 }
 
@@ -64,20 +84,23 @@ void Runtime::Impl::write_initial_field_data(FieldHandle h, const void* host_ptr
     detail::RegisteredField& rf = field_or_throw(h, "write_initial_field_data()");
     const std::size_t total_bytes = rf.total_bytes();
 
-    std::vector<cl_event> write_events;
+    detail::ScopedEventList write_events;
+    write_events.reserve(local_devices_.size());
     for (std::size_t d = 0; d < local_devices_.size(); ++d) {
-        cl_event ev = nullptr;
+        detail::ScopedEvent ev;
         detail::check_cl(
             clEnqueueWriteBuffer(local_devices_[d].transfer_queue, rf.replicas[d], CL_FALSE,
-                                 0, total_bytes, host_ptr, 0, nullptr, &ev),
+                                 0, total_bytes, host_ptr, 0, nullptr, ev.out_ptr()),
             "clEnqueueWriteBuffer(write_initial_field_data)");
-        write_events.push_back(ev);
+        write_events.push_back(std::move(ev));
+        detail::check_cl(clFlush(local_devices_[d].transfer_queue), "clFlush(write_initial_field_data)");
     }
 
-    for (cl_event ev : write_events) {
-        if (ev == nullptr) continue;
-        detail::check_cl(clWaitForEvents(1, &ev), "clWaitForEvents(write_initial_field_data)");
-        clReleaseEvent(ev);
+    for (detail::ScopedEvent& ev : write_events) {
+        if (!ev) continue;
+        cl_event raw = ev.get();
+        detail::check_cl(clWaitForEvents(1, &raw), "clWaitForEvents(write_initial_field_data)");
+        ev.reset();
     }
 }
 
@@ -96,14 +119,18 @@ KernelHandle Runtime::Impl::create_kernel(const KernelSpec& spec) {
     const char* src_ptr = src.c_str();
     const std::size_t src_len = src.size();
 
+    std::vector<detail::ScopedProgram> programs;
+    programs.reserve(platforms_.size());
+
     // Build one program per platform context.
     for (std::size_t p = 0; p < platforms_.size(); ++p) {
         const detail::PlatformContext& pc = platforms_[p];
         cl_int err = CL_SUCCESS;
-        cl_program program = clCreateProgramWithSource(pc.context, 1, &src_ptr, &src_len, &err);
+        detail::ScopedProgram program(
+            clCreateProgramWithSource(pc.context, 1, &src_ptr, &src_len, &err));
         detail::check_cl(err, "clCreateProgramWithSource");
 
-        err = clBuildProgram(program, static_cast<cl_uint>(pc.devices.size()), pc.devices.data(),
+        err = clBuildProgram(program.get(), static_cast<cl_uint>(pc.devices.size()), pc.devices.data(),
                              spec.build_options.empty() ? nullptr : spec.build_options.c_str(),
                              nullptr, nullptr);
 
@@ -112,30 +139,36 @@ KernelHandle Runtime::Impl::create_kernel(const KernelSpec& spec) {
             oss << "clBuildProgram failed for kernel " << spec.entry_point << "\n";
             for (std::size_t i = 0; i < pc.devices.size(); ++i) {
                 std::size_t log_size = 0;
-                clGetProgramBuildInfo(program, pc.devices[i], CL_PROGRAM_BUILD_LOG, 0, nullptr, &log_size);
+                clGetProgramBuildInfo(program.get(), pc.devices[i], CL_PROGRAM_BUILD_LOG, 0, nullptr, &log_size);
                 std::vector<char> log(log_size + 1, '\0');
-                clGetProgramBuildInfo(program, pc.devices[i], CL_PROGRAM_BUILD_LOG, log_size, log.data(), nullptr);
+                clGetProgramBuildInfo(program.get(), pc.devices[i], CL_PROGRAM_BUILD_LOG, log_size, log.data(), nullptr);
                 oss << "---- device " << i << " ----\n" << log.data() << "\n";
-            }
-            clReleaseProgram(program);
-            for (cl_program built : rk.programs_per_platform) {
-                if (built != nullptr) clReleaseProgram(built);
             }
             throw Error(oss.str());
         }
-        rk.programs_per_platform[p] = program;
+        programs.push_back(std::move(program));
     }
 
     // One kernel object per local device (arguments are set per device).
+    std::vector<detail::ScopedKernel> kernels;
+    kernels.reserve(local_devices_.size());
     for (std::size_t d = 0; d < local_devices_.size(); ++d) {
         const int p = local_devices_[d].platform_index;
         cl_int err = CL_SUCCESS;
-        rk.kernels_per_local_device[d] =
-            clCreateKernel(rk.programs_per_platform[p], spec.entry_point.c_str(), &err);
+        detail::ScopedKernel kernel(
+            clCreateKernel(programs[static_cast<std::size_t>(p)].get(), spec.entry_point.c_str(), &err));
         detail::check_cl(err, "clCreateKernel");
+        kernels.push_back(std::move(kernel));
     }
 
-    kernels_.emplace(h.value, std::move(rk));
+    auto [it, inserted] = kernels_.emplace(h.value, std::move(rk));
+    (void)inserted;
+    for (std::size_t p = 0; p < programs.size(); ++p) {
+        it->second.programs_per_platform[p] = programs[p].release();
+    }
+    for (std::size_t d = 0; d < kernels.size(); ++d) {
+        it->second.kernels_per_local_device[d] = kernels[d].release();
+    }
     return h;
 }
 

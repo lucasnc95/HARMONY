@@ -56,7 +56,14 @@ enum class BalanceMode {
     static_threshold,   // a single rebalance attempt (after the warm-up)
     dynamic_threshold,  // a rebalance attempt every `interval` iterations
     static_profiled,    // like static_threshold, decided by the cost model
-    dynamic_profiled    // like dynamic_threshold, decided by the cost model
+    dynamic_profiled,   // like dynamic_threshold, decided by the cost model
+    hierarchical        // two-phase intra-node + hysteresis-gated inter-node
+};
+
+// Load-calculation algorithm used by automatic balancing (R4).
+enum class BalanceAlgorithm {
+    erad,     // deterministic throughput-proportional shares
+    hwtopolb  // bounded stochastic perturbation around throughput shares
 };
 
 // How a kernel uses a field argument. The runtime derives from it the
@@ -153,6 +160,34 @@ struct DeviceTiming {
 };
 
 // ---------------------------------------------------------------------------
+// Hardware topology metrics
+// ---------------------------------------------------------------------------
+
+struct TopoMetrics {
+    // Per-device PCIe round-trip latency in nanoseconds (ns).
+    std::vector<double> pcie_latency_ns;
+    // Per-device PCIe peak bandwidth in gigabytes per second (GB/s).
+    std::vector<double> pcie_bandwidth_gbps;
+    // Rank-to-rank MPI latency in nanoseconds, indexed by [src_rank * rank_count + dst_rank].
+    std::vector<double> mpi_latency_ns;
+    // Rank-to-rank MPI bandwidth in gigabytes per second with the same indexing.
+    std::vector<double> mpi_bandwidth_gbps;
+    bool synthetic{false};
+
+    // Flat N x N matrix of NUMA distances (where N is the number of NUMA nodes).
+    std::vector<int> numa_distance;
+    // Mapping from global device index to NUMA node index.
+    std::vector<int> device_numa_node;
+
+    // Per-device memory contention factor in [1.0, inf), where 1.0 = no contention.
+    std::vector<double> memory_contention_factor;
+    // Per-device Thermal Design Power in watts (W).
+    std::vector<double> thermal_tdp_watts;
+    // Per-device current measured power draw in watts (W).
+    std::vector<double> current_power_watts;
+};
+
+// ---------------------------------------------------------------------------
 // Specifications
 // ---------------------------------------------------------------------------
 
@@ -240,6 +275,20 @@ struct AutoBalancePolicy {
     // a balancing attempt: the attempts keep their schedule (multiples of
     // `interval`) and a static policy still makes its single attempt.
     int warmup{0};
+
+    // Load-calculation algorithm (R4).
+    BalanceAlgorithm algorithm{BalanceAlgorithm::erad};
+    float perturbation_factor{0.0f};
+    unsigned int seed{0};  // 0 = auto-generate on rank 0 and broadcast via MPI_Bcast
+
+    // Contention and power-capping controls (R5).
+    bool use_contention_adjustment{false};
+    bool use_power_cap{false};
+    double power_budget_watts{0.0};
+
+    // NUMA migration cost-to-gain ratio threshold (R2, default 0.50).
+    // If < 0.0, falls back to Runtime::numa_cost_gain_ratio_threshold().
+    double numa_cost_gain_ratio_threshold{0.50};
 };
 
 // Extra meaning of a field in a step (Runtime::step().tag_field()).
@@ -328,6 +377,13 @@ struct BalanceRecord {
     std::size_t bytes_moved{0};
     double decision_seconds{0.0};
     double migration_seconds{0.0};
+    std::string algorithm{"erad"};        // "erad", "hwtopolb", or "manual"
+    float perturbation_factor{0.0f};
+    unsigned int seed{0};
+    bool contention_adjusted{false};
+    bool power_capped{false};
+    double power_budget_watts{0.0};
+    double throttle_factor{1.0};
 };
 
 // The wall time of the critical path in one line: the MPI process that
