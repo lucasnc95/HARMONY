@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Statistics of the paper tests (output of paper_job.pbs):
+# Statistics of the paper tests (output of paper_<scenario>.pbs):
 #
 #   scripts/pbs/paper_stats.sh [results/paper]
 #

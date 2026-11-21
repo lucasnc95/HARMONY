@@ -50,6 +50,9 @@ void Runtime::gather(FieldHandle field, void* host_dst, std::size_t bytes) {
 
 void Runtime::synchronize(bool force_finish) { impl_->synchronize(force_finish); }
 
+void Runtime::set_run_info(const RunInfo& info) { impl_->set_run_info(info); }
+void Runtime::add_result(const std::string& name, const std::string& value) { impl_->add_result(name, value); }
+
 void Runtime::print_devices(std::ostream& os) const { impl_->print_devices(os); }
 void Runtime::print_partitions(const std::string& title, std::ostream& os) const {
     impl_->print_partitions(title, os);

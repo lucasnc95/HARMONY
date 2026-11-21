@@ -92,7 +92,7 @@ bool Runtime::Impl::propose_division(std::vector<DevicePartition>& new_parts, Ba
     new_parts = partitions_from_loads(proposed);
     if (proposed.empty() || new_parts.size() != partitions_.size()) {
         reset_balance_window_events();
-        record.reason = "could not compute a new division";
+        record.reason = "no valid division proposed";
         return false;
     }
 
@@ -103,7 +103,7 @@ bool Runtime::Impl::propose_division(std::vector<DevicePartition>& new_parts, Ba
         current_loads_ = loads_from_partitions(partitions_);
         reset_balance_window_events();
         record.iteration_seconds_after = record.iteration_seconds_before;
-        record.reason = "the division is already balanced";
+        record.reason = "proposed division equals the current one";
         return false;
     }
     return true;
@@ -112,7 +112,7 @@ bool Runtime::Impl::propose_division(std::vector<DevicePartition>& new_parts, Ba
 bool Runtime::Impl::maybe_rebalance_from_timings(const std::vector<FieldHandle>& requested_fields,
                                                  float threshold, BalanceRecord& record) {
     if (!partition_.has_value() || partitions_.empty()) {
-        record.reason = "no partition defined yet";
+        record.reason = "no partition defined";
         return false;
     }
     const std::vector<FieldHandle> fields = unique_existing_proportional_fields(requested_fields);
@@ -123,8 +123,8 @@ bool Runtime::Impl::maybe_rebalance_from_timings(const std::vector<FieldHandle>&
 
     const double distance = detail::l2_norm_diff(current_loads_, loads_from_partitions(new_parts));
     const bool accept = distance >= static_cast<double>(threshold);
-    record.reason = "division change " + detail::format_number(distance, 3) + (accept ? " >= " : " < ") +
-                    "threshold " + detail::format_number(threshold, 4);
+    record.reason = "change " + detail::format_number(distance, 3) + (accept ? " >= " : " < ") + "threshold " +
+                    detail::format_number(threshold, 4);
     if (!accept) {
         reset_balance_window_events();
         return false;
@@ -137,12 +137,12 @@ bool Runtime::Impl::maybe_rebalance_from_timings(const std::vector<FieldHandle>&
 bool Runtime::Impl::maybe_rebalance_profiled(const std::vector<FieldHandle>& requested_fields,
                                              const AutoBalancePolicy& policy, BalanceRecord& record) {
     if (!partition_.has_value() || partitions_.empty()) {
-        record.reason = "no partition defined yet";
+        record.reason = "no partition defined";
         return false;
     }
     if (policy.total_iterations <= 0) {
         reset_balance_window_events();
-        record.reason = "AutoBalancePolicy::total_iterations not set";
+        record.reason = "total_iterations not set";
         return false;
     }
     const std::vector<FieldHandle> fields = unique_existing_proportional_fields(requested_fields);
@@ -185,11 +185,9 @@ bool Runtime::Impl::maybe_rebalance_profiled(const std::vector<FieldHandle>& req
     if (remaining_iterations == 0) {
         record.reason = "no iterations left";
     } else {
-        record.reason = "saves " + detail::format_seconds(estimated_gain) + " in the " +
-                        detail::format_count(remaining_iterations) +
-                        (remaining_iterations == 1 ? " iteration left" : " iterations left") +
-                        (local_decision ? ", more than" : ", not more than") + " moving the data costs (" +
-                        detail::format_seconds(migration_cost) + ")";
+        record.reason = "gain " + detail::format_seconds(estimated_gain) + (local_decision ? " > " : " <= ") +
+                        "cost " + detail::format_seconds(migration_cost) + " (" +
+                        detail::format_count(remaining_iterations) + " iterations left)";
     }
 
     if (local_decision == 0) {
@@ -260,8 +258,8 @@ void Runtime::Impl::load_profiling_data(const std::string& profiling_file) {
                 profiling_data_.push_back(detail::ProfileSegment{v, m, b});
             }
         } else {
-            std::cerr << "[HARMONY Warning] Rank 0 could not open profiling file '" << profiling_file
-                      << "'. Using a conservative default cost model." << std::endl;
+            std::cerr << "[HARMONY] warning: cannot open the migration profile '" << profiling_file
+                      << "'; using the default cost model" << std::endl;
             profiling_data_.push_back(detail::ProfileSegment{16777216ull, 1.0e-9, 1.0e-6});
         }
 

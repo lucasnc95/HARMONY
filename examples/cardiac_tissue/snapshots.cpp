@@ -189,7 +189,6 @@ int main(int argc, char** argv) {
         const std::size_t real_bytes = dp ? sizeof(double) : sizeof(float);
 
         runtime.discover_devices({o.device, 0});
-        runtime.print_devices();
 
         const std::size_t plane = static_cast<std::size_t>(o.nx) * o.ny;
         const std::size_t cells = plane * o.nz;
@@ -317,8 +316,6 @@ int main(int argc, char** argv) {
             out.add("device", device);
             out.add("rank", rank);
             out.close();
-            std::printf("  wrote %s/%s  (t = %.2f ms)\n", o.output.c_str(), name, t);
-            std::fflush(stdout);
         };
         auto finish_snapshot = [&](std::size_t step) {
             snapshot(step);
@@ -327,9 +324,14 @@ int main(int argc, char** argv) {
             ++index;
         };
 
-        if (runtime.rank() == 0) {
-            std::printf("Writing %zu snapshots of a %d x %d x %d tissue to %s/ (one every %.3g ms)\n",
-                        steps / steps_per_snapshot + 1, o.nx, o.ny, o.nz, o.output.c_str(), o.every);
+        {
+            std::ostringstream every;
+            every << "every " << o.every << " ms in " << o.output;
+            runtime.set_run_info({"cardiac_snapshots",
+                                  {{"Tissue", std::to_string(o.nx) + " x " + std::to_string(o.ny) + " x " +
+                                                  std::to_string(o.nz) + " cells"},
+                                   {"Steps", std::to_string(steps)},
+                                   {"Snapshots", every.str()}}});
         }
         finish_snapshot(0);
         for (std::size_t k = 0; k < steps; ++k) {
@@ -337,11 +339,6 @@ int main(int argc, char** argv) {
             if ((k + 1) % steps_per_snapshot == 0 || k + 1 == steps) finish_snapshot(k + 1);
         }
         runtime.synchronize(true);
-        if (runtime.rank() == 0) {
-            std::printf("Done. In ParaView, open %s/tissue_..vtk (the series) and color by Vm,\n"
-                        "substeps_per_step (cost) or device (who computes each region).\n",
-                        o.output.c_str());
-        }
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << std::endl;

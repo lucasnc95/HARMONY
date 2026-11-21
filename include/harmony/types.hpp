@@ -127,6 +127,7 @@ struct DeviceSelection {
 
 struct DeviceInfo {
     int rank{0};
+    std::string host;                // host name of the owning MPI process
     int local_index{-1};
     int global_index{-1};
     std::string name;
@@ -166,6 +167,12 @@ struct FieldSpec {
     BufferUsage usage = BufferUsage::read_write;
     const void* host_ptr = nullptr;  // optional initial data
     RedistributionDependency redistribution = RedistributionDependency::proportional;
+};
+
+// Description of the application, shown in the run header.
+struct RunInfo {
+    std::string application;                                      // e.g. "cardiac_tissue"
+    std::vector<std::pair<std::string, std::string>> parameters;  // name, value (in order)
 };
 
 struct KernelSpec {
@@ -304,6 +311,7 @@ struct RankReport {
     double balance_seconds{0.0};        // measuring and deciding (without MPI)
     double gather_seconds{0.0};         // Runtime::gather()
     double unmeasured_seconds{0.0};     // outside the runtime (application code, ...)
+    std::size_t peak_memory_bytes{0};   // peak resident host memory (RAM) of the process
 
     double mpi_seconds() const {
         return mpi_halo_seconds + mpi_migration_seconds + mpi_balance_seconds + mpi_sync_seconds;
@@ -351,6 +359,12 @@ struct TimelineReport {
     double unmeasured_seconds{0.0};
 };
 
+// A named value reported by the application (Runtime::add_result()).
+struct ApplicationResult {
+    std::string name;
+    std::string value;
+};
+
 struct TimingReport {
     double wall_seconds{0.0};   // between start_timing() and stop_timing()
     std::size_t iterations{0};  // execute() calls in the same interval
@@ -358,6 +372,7 @@ struct TimingReport {
     std::vector<RankReport> ranks;
     std::vector<BalanceRecord> balance;
     TimelineReport timeline;
+    std::vector<ApplicationResult> results;
 };
 
 } // namespace harmony

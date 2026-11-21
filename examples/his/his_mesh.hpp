@@ -8,8 +8,6 @@
 #define HARMONY_EXAMPLES_HIS_MESH_HPP
 
 #include <cstddef>
-#include <cstdio>
-#include <iostream>
 #include <vector>
 
 namespace his {
@@ -82,22 +80,6 @@ void initialize(std::vector<T>& mesh, const std::vector<int>& p) {
             }
         }
     }
-}
-
-// Prints the antigen concentration of every point.
-template <typename T>
-void print_antigen(const std::vector<T>& mesh, const std::vector<int>& p, const char* title) {
-    std::cout << "\n=== " << title << " ===\n";
-    for (int x = 0; x < p[COMPRIMENTO_GLOBAL_X]; ++x) {
-        for (int y = 0; y < p[COMPRIMENTO_GLOBAL_Y]; ++y) {
-            for (int z = 0; z < p[COMPRIMENTO_GLOBAL_Z]; ++z) {
-                std::printf("%8.4f ", static_cast<double>(mesh[index_of(CELULA_A, x, y, z, p)]));
-            }
-            std::printf("\n");
-        }
-        std::printf("\n");
-    }
-    std::fflush(stdout);
 }
 
 // Names of the cell types (for the VTK output).

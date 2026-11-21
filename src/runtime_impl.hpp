@@ -12,13 +12,15 @@
 //   halo.cpp            halo exchange between neighbouring partitions
 //   redistribution.cpp  data migration after a repartition, rebalance_to()
 //   balancing.cpp       automatic load-balancing policies
-//   timing.cpp          phase timers and the timing report
+//   timing.cpp          phase timers and the timing report (data)
+//   logging.cpp         everything printed: run header, balancing log, summary, CSV
 
 #ifndef HARMONY_RUNTIME_IMPL_HPP
 #define HARMONY_RUNTIME_IMPL_HPP
 
 #include "harmony/runtime.hpp"
 #include "detail/checks.hpp"
+#include "detail/format.hpp"
 #include "detail/opencl_resources.hpp"
 
 #include <CL/cl.h>
@@ -112,6 +114,10 @@ public:
     void write_timing_report(const std::string& path);
     void set_verbose(bool verbose) { verbose_ = verbose; }
 
+    // --- logging.cpp --------------------------------------------------------
+    void set_run_info(const RunInfo& info) { run_info_ = info; }
+    void add_result(const std::string& name, const std::string& value) { results_.push_back({name, value}); }
+
 private:
     // While alive, the CPU time is charged to `phase` (the enclosing phase is
     // paused and resumed at destruction).
@@ -127,6 +133,12 @@ private:
     };
     void enter_phase(Phase phase);
     void leave_phase();
+    // Seconds charged to `phase` so far, including the running part when it
+    // is the current phase.
+    double phase_seconds_now(Phase phase) const;
+    // Seconds spent computing a balancing decision (without the waits for
+    // queued kernels and for the other ranks, which have their own phases).
+    double decision_seconds_now() const { return phase_seconds_now(Phase::balance); }
 
     // --- devices.cpp --------------------------------------------------------
     void release_opencl_objects();
@@ -141,6 +153,7 @@ private:
     int owner_rank_of_global_device(int g) const;
     int local_index_of_global_device(int g) const;
     void rebuild_partitions_equal_like_wrapper();
+    std::size_t cut_unit(std::size_t parts) const;
     std::vector<DevicePartition> partitions_from_loads(const std::vector<float>& loads) const;
     std::vector<float> loads_from_partitions(const std::vector<DevicePartition>& parts) const;
 
@@ -169,6 +182,7 @@ private:
     void record_field_events(const std::vector<ResolvedFieldArg>& fields, std::size_t local_device,
                              LaunchPart part, cl_event ev);
     void bind_kernel_args(std::size_t local_device, cl_kernel kernel, const KernelBinding& binding);
+    std::size_t default_group_size(const KernelInvocation& ki, std::size_t local_device, cl_kernel kernel);
     void wait_before_halo_exchange(HaloSync sync);
     std::vector<FieldHandle> fields_with_role(const ExecutionStep& step, StepFieldRole role) const;
     std::vector<FieldHandle> fields_used_by(const ExecutionStep& step) const;
@@ -232,9 +246,10 @@ private:
     void load_profiling_data(const std::string& profiling_file);
     double get_migration_overhead(std::size_t volume) const;
 
-    // --- timing.cpp ---------------------------------------------------------
-    void print_balance_policy(const AutoBalancePolicy& policy);
+    // --- logging.cpp --------------------------------------------------------
+    void print_run_header(const ExecutionStep& step);
     void print_balance_interval_metrics(BalanceRecord record);
+    detail::Table device_table(bool with_partition) const;
 
     // --- state --------------------------------------------------------------
     bool mpi_initialized_by_runtime_{false};
@@ -277,7 +292,6 @@ private:
     std::vector<float> current_loads_;  // cumulative
     std::vector<DeviceTiming> device_timings_;
     bool static_balance_attempted_{false};  // static modes: one attempt per run
-    bool balance_policy_announced_{false};
     std::optional<AutoBalancePolicy> balance_policy_;  // last policy seen (for the report)
     std::size_t balance_window_start_iteration_{0};    // iteration the balance window started
     std::vector<detail::ProfileSegment> profiling_data_;
@@ -304,6 +318,9 @@ private:
     std::size_t timing_start_iteration_{0};
     std::vector<BalanceRecord> balance_log_;
     bool verbose_{true};
+    bool run_header_printed_{false};
+    RunInfo run_info_;
+    std::vector<ApplicationResult> results_;
     int balance_attempts_{0};
     bool devices_discovered_{false};
 };

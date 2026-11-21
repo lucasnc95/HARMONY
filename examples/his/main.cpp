@@ -23,6 +23,8 @@
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -48,23 +50,11 @@ struct Options {
     std::string kernel_file = KERNEL_FILE;
     harmony::HaloSync halo_sync = harmony::HaloSync::overlap;
     bool gather_final = true;
-    bool print_mesh = false;
     bool verbose = true;  // log every balancing attempt (--verbose 0 to silence)
     harmony::DeviceKind device = harmony::DeviceKind::all;
     int cpu_host_cores = 0;  // cores of each CPU device left to the MPI process
     bool use_double = false;  // --precision float|double
 };
-
-const char* balance_name(harmony::BalanceMode m) {
-    switch (m) {
-        case harmony::BalanceMode::off: return "off";
-        case harmony::BalanceMode::static_threshold: return "static / threshold";
-        case harmony::BalanceMode::dynamic_threshold: return "dynamic / threshold";
-        case harmony::BalanceMode::static_profiled: return "static / profiled";
-        case harmony::BalanceMode::dynamic_profiled: return "dynamic / profiled";
-    }
-    return "?";
-}
 
 harmony::BalanceMode parse_balance_mode(const std::string& schedule, const std::string& strategy) {
     if (schedule == "off") return harmony::BalanceMode::off;
@@ -82,15 +72,6 @@ harmony::HaloSync parse_halo_sync(const std::string& value) {
     if (value == "local") return harmony::HaloSync::local;
     if (value == "global") return harmony::HaloSync::global;
     throw std::invalid_argument("--halo-sync must be overlap, local or global");
-}
-
-const char* halo_sync_name(harmony::HaloSync sync) {
-    switch (sync) {
-        case harmony::HaloSync::overlap: return "overlap (exchange while the interior is computed)";
-        case harmony::HaloSync::local:   return "local (devices finish the interior first)";
-        case harmony::HaloSync::global:  return "global (devices finish + MPI barrier)";
-    }
-    return "?";
 }
 
 bool parse_bool(const std::string& v) { return v == "1" || v == "true" || v == "yes"; }
@@ -118,7 +99,6 @@ Options parse_options(int argc, char** argv) {
         else if (key == "--report-csv") o.report_csv = v;
         else if (key == "--kernel-file") o.kernel_file = v;
         else if (key == "--gather-final") o.gather_final = parse_bool(v);
-        else if (key == "--print-mesh") o.print_mesh = parse_bool(v);
         else if (key == "--halo-sync") o.halo_sync = parse_halo_sync(v);
         else if (key == "--verbose") o.verbose = parse_bool(v);
         else if (key == "--device") {
@@ -196,7 +176,6 @@ int run(const Options& opt, harmony::Runtime& runtime) {
 
     // The devices have their copies now: only rank 0 keeps the host mesh
     // (to receive the final gather). Saves a whole buffer of RAM per node.
-    const std::size_t mesh_bytes = mesh.size() * sizeof(T);
     if (runtime.rank() != 0 || !opt.gather_final) std::vector<T>().swap(mesh);
 
     // ProcessarPontos(out, in, params): one step per buffer direction.
@@ -242,29 +221,12 @@ int run(const Options& opt, harmony::Runtime& runtime) {
         .synchronize_at_end(false)
         .build();
 
-    if (runtime.rank() == 0) {
-        const double mib = static_cast<double>(mesh_bytes) / (1024.0 * 1024.0);
-        std::cout << "HARMONY - Human Immune System simulation\n"
-                  << "  Mesh        : " << opt.x << " x " << opt.y << " x " << opt.z << " points ("
-                  << std::fixed << std::setprecision(1) << mib << " MiB per buffer)\n" << std::defaultfloat
-                  << "  Precision   : " << (std::is_same_v<T, double> ? "double" : "float") << "\n"
-                  << "  Iterations  : " << opt.iterations << "\n"
-                  << "  Balancing   : " << balance_name(opt.balance_mode);
-        if (opt.balance_mode != harmony::BalanceMode::off) {
-            std::cout << ", warm-up probe at iteration " << opt.balance_warmup
-                      << ", interval " << opt.rebalance_interval;
-            if (opt.balance_mode == harmony::BalanceMode::static_threshold ||
-                opt.balance_mode == harmony::BalanceMode::dynamic_threshold) {
-                std::cout << ", threshold " << opt.rebalance_threshold;
-            } else {
-                std::cout << ", profile '" << opt.profiling_file << "'";
-            }
-        }
-        std::cout << "\n  Halo sync   : " << halo_sync_name(opt.halo_sync) << "\n\n";
-    }
-    runtime.print_devices();
-    if (runtime.rank() == 0) std::cout << "\n";
-    runtime.print_partitions("Initial partitions");
+    runtime.set_run_info({"his",
+                          {{"Mesh", std::to_string(opt.x) + " x " + std::to_string(opt.y) + " x " +
+                                        std::to_string(opt.z) + " points"},
+                           {"Cell types", std::to_string(his::MALHA_TOTAL_CELULAS) + " per point"},
+                           {"Precision", std::is_same_v<T, double> ? "double" : "float"},
+                           {"Iterations", std::to_string(opt.iterations)}}});
 
     // --- Time loop --------------------------------------------------------
     // start/stop_timing wait for every device and rank, so the interval
@@ -281,31 +243,20 @@ int run(const Options& opt, harmony::Runtime& runtime) {
         runtime.gather(final_is_a ? state_a : state_b, mesh.data(), mesh.size() * sizeof(T));
     }
 
-    if (runtime.rank() == 0) std::cout << "\n";
-    runtime.print_partitions("Final partitions");
-    if (runtime.rank() == 0) std::cout << "\n";
-    runtime.print_timing_report();
-    if (!opt.report_csv.empty()) runtime.write_timing_report(opt.report_csv);
-
     if (runtime.rank() == 0) {
         if (opt.gather_final) {
-            if (opt.print_mesh) {
-                his::print_antigen(mesh, params, final_is_a ? "STATE_A_FINAL" : "STATE_B_FINAL");
-            }
-            std::cout << "Checksum: " << std::hex << checksum(mesh) << std::dec << "\n";
+            std::ostringstream hex;
+            hex << std::hex << checksum(mesh);
+            runtime.add_result("Checksum", hex.str());
         }
-
         if (!opt.timing_file.empty()) {
             std::ofstream timing_out(opt.timing_file, std::ios::app);
-            if (!timing_out) {
-                std::cerr << "Could not open timing file: " << opt.timing_file << "\n";
-                return 3;
-            }
-            // One value per line; the PBS scripts compute statistics from it.
+            if (!timing_out) throw std::runtime_error("cannot open the timing file " + opt.timing_file);
             timing_out << std::fixed << std::setprecision(9) << elapsed << "\n";
         }
-        std::cout << "Execution time: " << std::fixed << std::setprecision(3) << elapsed << " s\n";
     }
+    runtime.print_timing_report();
+    if (!opt.report_csv.empty()) runtime.write_timing_report(opt.report_csv);
     return 0;
 }
 

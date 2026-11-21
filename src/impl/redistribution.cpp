@@ -19,7 +19,7 @@ constexpr int kRedistributeFieldTagStride = 4096;
 void Runtime::Impl::rebalance_to(const std::vector<float>& loads) {
     if (!partition_.has_value() || partitions_.empty()) return;
     PhaseTimer timer(*this, Phase::balance);
-    const double t0 = MPI_Wtime();
+    const double decision0 = decision_seconds_now();
     if (loads.size() != partitions_.size()) {
         throw Error("rebalance_to(): loads size must match number of partitions");
     }
@@ -48,15 +48,15 @@ void Runtime::Impl::rebalance_to(const std::vector<float>& loads) {
     if (detail::same_partition_layout(old_parts, new_parts)) {
         current_loads_ = loads_from_partitions(partitions_);
         reset_balance_window_events();
-        record.reason = "the requested loads give the current division";
+        record.reason = "requested division equals the current one";
     } else {
         apply_partitions(all_field_handles(), old_parts, new_parts, record);
         record.applied = true;
-        record.reason = "requested by the application (rebalance_to)";
+        record.reason = "requested by rebalance_to()";
     }
 
     for (const DevicePartition& p : partitions_) record.elements_after.push_back(p.element_count);
-    record.decision_seconds = MPI_Wtime() - t0 - record.migration_seconds;
+    record.decision_seconds = decision_seconds_now() - decision0;
     print_balance_interval_metrics(std::move(record));
 }
 

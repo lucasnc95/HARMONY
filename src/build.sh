@@ -11,6 +11,7 @@ HARMONY_SOURCES="
     src/impl/events.cpp
     src/impl/execution.cpp
     src/impl/halo.cpp
+    src/impl/logging.cpp
     src/impl/partitioning.cpp
     src/impl/redistribution.cpp
     src/impl/resources.cpp

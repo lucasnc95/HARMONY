@@ -39,13 +39,19 @@ run_check "multi_kernel (3 kernels per step, device vs CPU)" \
     multi_kernel/bin/multi_kernel --n 50000 --iterations 60 --interval 15
 run_check "his (small mesh, dynamic balancing)" \
     his/bin/his --x 8 --y 8 --z 40 --iterations 101 --rebalance-interval 20
+run_check "stencil2d map, odd size + dynamic balancing (HARMONY vs MPI+OpenCL)" \
+    stencil2d/bin/stencil2d --impl both --kernel map --n 1000003 --flop-repeat 4 --iters 40 \
+    --balance-mode dynamic --balance-strategy threshold --rebalance-threshold 0.0001 --balance-warmup 5 --rebalance-interval 10
+run_check "stencil2d lu, odd grid + dynamic balancing (HARMONY vs MPI+OpenCL)" \
+    stencil2d/bin/stencil2d --impl both --kernel lu --nx 509 --ny 331 --flop-repeat 4 --chains 4 --iters 40 \
+    --balance-mode dynamic --balance-strategy threshold --rebalance-threshold 0.0001 --balance-warmup 5 --rebalance-interval 10
 run_check "his double precision" \
     his/bin/his --x 8 --y 8 --z 40 --iterations 41 --rebalance-interval 20 --precision double
 run_check "stencil2d (HARMONY vs MPI+OpenCL)" \
-    stencil2d/bin/stencil2d --impl both --kernel lu --nx 128 --ny 128 --iters 50 --report 0
+    stencil2d/bin/stencil2d --impl both --kernel lu --nx 128 --ny 128 --iters 50
 run_check "stencil2d double precision, 4 chains, static balancing (HARMONY vs MPI+OpenCL)" \
     stencil2d/bin/stencil2d --impl both --kernel lu --precision double --chains 4 --flop-repeat 8 \
-    --nx 128 --ny 128 --iters 40 --report 0 --balance-mode static --balance-warmup 10 --rebalance-interval 5
+    --nx 128 --ny 128 --iters 40 --balance-mode static --balance-warmup 10 --rebalance-interval 5
 
 run_check "cardiac_tissue (2 kernels, ToR-ORd-like model, device vs CPU)" \
     cardiac_tissue/bin/cardiac_tissue --nx 3 --ny 3 --nz 24 --time 6 --rebalance-interval 100 --check 1

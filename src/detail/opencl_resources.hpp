@@ -71,6 +71,9 @@ struct RegisteredKernel {
     KernelSpec spec;
     std::vector<cl_program> programs_per_platform;
     std::vector<cl_kernel> kernels_per_local_device;
+    // Work-group size used when the application does not give one, per local
+    // device (0 = not chosen yet). See Runtime::Impl::default_group_size.
+    std::vector<std::size_t> group_size_per_local_device;
 };
 
 // Linear segment of the migration-cost model: cost = m * bytes + b,

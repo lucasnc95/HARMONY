@@ -20,11 +20,18 @@
 //                      "profiling.txt", /*warmup=*/500})
 //       .build();
 //
+//   runtime.set_run_info({"my_app", {{"Mesh", "512 x 512"}}});
 //   runtime.start_timing();
-//   for (...) runtime.execute(step);
+//   for (...) runtime.execute(step);                      // first call prints the run header
 //   runtime.stop_timing();
-//   runtime.print_timing_report();
 //   runtime.gather(v, host_buffer, bytes);                // result on rank 0
+//   runtime.add_result("Checksum", "...");
+//   runtime.print_timing_report();
+//
+// Log (rank 0, standard output): the run header before the first step, one
+// entry per load-balancing decision (set_verbose(false) to omit them) and
+// the summary printed by print_timing_report(). Warnings go to standard
+// error, prefixed with "[HARMONY] warning:".
 
 #ifndef HARMONY_RUNTIME_HPP
 #define HARMONY_RUNTIME_HPP
@@ -104,6 +111,12 @@ public:
     const std::vector<DevicePartition>& partitions() const noexcept;
     const std::vector<DeviceTiming>& device_timings() const noexcept;
 
+    // Run description shown in the run header (call before the first execute()).
+    void set_run_info(const RunInfo& info);
+    // Application result shown in the summary and in the CSV report
+    // (e.g. a checksum or a verification). Meaningful on rank 0.
+    void add_result(const std::string& name, const std::string& value);
+
     // Tables printed by rank 0 only (not collective).
     void print_devices(std::ostream& os = std::cout) const;
     void print_partitions(const std::string& title = "Partitions", std::ostream& os = std::cout) const;
@@ -155,7 +168,7 @@ public:
     // Every row type has its header in a line starting with "#".
     void write_timing_report(const std::string& path);
 
-    // Rank 0 prints every load-balancing attempt as it happens (default: on).
+    // Rank 0 logs every load-balancing decision as it happens (default: on).
     void set_verbose(bool verbose);
 
 private:

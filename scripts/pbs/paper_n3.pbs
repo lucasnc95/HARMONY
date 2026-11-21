@@ -1,57 +1,36 @@
 #!/bin/bash
 #----------------------------------------------------------------------------
-# Paper tests, scenario n3: compute-0-2 + compute-3-6 + compute-1-0 (vnode 0: A100 without MIG): the same 5 configurations.
-# Nodes: compute-0-2 (32 cores, 1 GPU, 28 GB), compute-3-6 (24 cores, 1 GPU, 20 GB),
-#            compute-1-0 (128 cores: 64 of vnode 0 + 64 of vnode 1; the A100 of vnode 0; 64 GB)
-# (RAM asked explicitly with mem=; without it PBS reserves only 6 GB.)
+# HARMONY paper tests, scenario n3: compute-0-2, compute-3-4 and compute-1-0, GPU and CPU on each.
 #
-# compute-1-0: two chunks, 64 cores + one GPU on vnode compute-1-0[0] (the
-# A100 without MIG) and 64 cores on vnode compute-1-0[1], 128 cores in all.
-# The second chunk has mpiprocs=0: still ONE MPI process on compute-1-0,
-# which sees the 128 cores. place=free, because place=scatter would forbid two
-# chunks on the same host. As a safeguard, ONE_RANK_PER_NODE=1 makes the job
-# start one process per host even if the node file lists a host twice. Before the runs
-# the job checks that the rank on compute-1-0 sees that GPU and no MIG
-# instance; otherwise it stops (rank_wrapper.sh --check-gpus).
+# Nodes:
+#   compute-0-2  32 cores, 1 GPU, 28 GB
+#   compute-3-4  16 cores, 1 GPU, 7 GB (free memory of the node)
+#   compute-1-0  128 cores (64 on vnode 0, 64 on vnode 1), the A100 of vnode 0, 64 GB
 #
-# Submit from the HARMONY root. By default every benchmark (his ocean lu
-# map cardiac) in double precision, 10 runs per configuration:
+# compute-1-0 is requested as two chunks on the same host (place=free), with
+# one MPI process (mpiprocs=0 on the second chunk; ONE_RANK_PER_NODE=1).
+# The GPU of vnode compute-1-0[0] is the A100 without MIG; the job stops if
+# a MIG instance is visible.
 #
+# Submit from the HARMONY directory:
 #   qsub scripts/pbs/paper_n3.pbs
-#   qsub -v BENCHES=map scripts/pbs/paper_n3.pbs              # one benchmark per job (shorter)
-#   qsub -v BENCHES=lu,RUNS=1,OUT_DIR=results/pilot scripts/pbs/paper_n3.pbs   # pilot
-#   qsub -l walltime=48:00:00 scripts/pbs/paper_n3.pbs   # only if the queue imposes a limit
+#   qsub -v BENCHES=map scripts/pbs/paper_n3.pbs
+#   qsub -v BENCHES=lu,RUNS=1,OUT_DIR=results/pilot scripts/pbs/paper_n3.pbs
 #
-# Variables (qsub -v): BENCHES ("his ocean lu map cardiac"), PRECISIONS
-# (double; "float double" for both), RUNS (10), RUNS_OFF, CONFIGS, WARMUP,
-# INTERVAL, LENGTH, THRESHOLD (0.01), CPU_HOST_CORES (1), HALO_SYNC,
-# GPU_PIN, OUT_DIR (results/paper). See paper_run.sh and paper_cases.sh.
-# Statistics: scripts/pbs/paper_stats.sh results/paper
+# Variables: see scripts/pbs/paper_run.sh. Statistics: scripts/pbs/paper_stats.sh
 #----------------------------------------------------------------------------
 #PBS -N HARMONY_n3
 #PBS -j oe
-#PBS -l select=1:host=compute-0-2:ncpus=32:ngpus=1:mem=28gb:mpiprocs=1+1:host=compute-3-6:ncpus=24:ngpus=1:mem=20gb:mpiprocs=1+1:vnode=compute-1-0[0]:ncpus=64:ngpus=1:mem=32gb:mpiprocs=1+1:vnode=compute-1-0[1]:ncpus=64:mem=32gb:mpiprocs=0
+#PBS -l select=1:host=compute-0-2:ncpus=32:ngpus=1:mem=28gb:mpiprocs=1+1:host=compute-3-4:ncpus=16:ngpus=1:mem=7gb:mpiprocs=1+1:vnode=compute-1-0[0]:ncpus=64:ngpus=1:mem=32gb:mpiprocs=1+1:vnode=compute-1-0[1]:ncpus=64:mem=32gb:mpiprocs=0
 #PBS -l place=free
 
 set -euo pipefail
-export ONE_RANK_PER_NODE=${ONE_RANK_PER_NODE:-1}   # compute-1-0 has two chunks
+export ONE_RANK_PER_NODE=${ONE_RANK_PER_NODE:-1}
+export GPU_PIN=${GPU_PIN:-compute-1-0=0}
 # shellcheck disable=SC1091
 source "${HARMONY_ROOT:-${PBS_O_WORKDIR:-$(pwd)}}/scripts/pbs/job_env.sh"
-# shellcheck disable=SC1091
-source "${PAPER_CASES_FILE:-$HARMONY_ROOT/scripts/pbs/paper_cases.sh}"
 
 SCENARIO=n3
-GPU_PIN=${GPU_PIN:-compute-1-0=0}
-BENCHES=${BENCHES:-"his ocean lu map cardiac"}
-BENCHES=${BENCHES//:/ }
-PRECISIONS=${PRECISIONS:-double}
-PRECISIONS=${PRECISIONS//:/ }
-
 # shellcheck disable=SC1091
 source "$HARMONY_ROOT/scripts/pbs/paper_run.sh"
-
-for bench in $BENCHES; do
-    for precision in $PRECISIONS; do
-        paper_run "$bench" "$precision"
-    done
-done
+paper_main

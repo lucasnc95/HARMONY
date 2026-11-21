@@ -34,7 +34,7 @@ struct Options {
 
     // HARMONY only.
     std::string halo_sync = "overlap";  // overlap | local | global
-    bool report = true;                 // print the timing report
+    bool verbose = true;                // log every load-balancing decision
     std::string report_csv;             // timing report as CSV (write_timing_report)
     bool gather = true;                 // collect the result on rank 0 (needed by --impl both)
     std::string balance_mode = "off";   // off | static | dynamic
@@ -59,6 +59,15 @@ struct Options {
                             : static_cast<std::size_t>(n);
     }
 };
+
+inline const char* kernel_name(Kernel k) {
+    switch (k) {
+        case Kernel::ocean: return "ocean";
+        case Kernel::lu:    return "lu";
+        case Kernel::map:   return "map";
+    }
+    return "";
+}
 
 inline const char* kernel_entry_point(Kernel k) {
     switch (k) {
@@ -88,10 +97,12 @@ std::vector<T> initial_data(const Options& o) {
 struct RunResult {
     double seconds = 0.0;        // wall time of the iterations (max over ranks)
     std::vector<double> output;  // full result, valid on rank 0 only
+    int status = 0;              // 0, or 1 if the comparison with the baseline failed
 };
 
 // Implementations (run_harmony.cpp / run_mpiocl.cpp). MPI must be initialized.
-RunResult run_harmony(const Options& o, int argc, char** argv);
+// With a baseline, run_harmony reports its time and compares the results.
+RunResult run_harmony(const Options& o, int argc, char** argv, const RunResult* baseline);
 RunResult run_mpiocl(const Options& o);
 
 } // namespace stencil2d

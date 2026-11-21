@@ -1,5 +1,6 @@
 // Fields (distributed buffers) and kernels.
 
+#include <algorithm>
 #include "runtime_impl.hpp"
 #include "detail/format.hpp"
 
@@ -38,10 +39,9 @@ FieldHandle Runtime::Impl::create_field(const FieldSpec& spec) {
         // fit in the device's largest buffer (on NVIDIA usually 1/4 of the memory).
         const detail::LocalDevice& ld = local_devices_[d];
         if (ld.max_buffer > 0 && total_bytes > ld.max_buffer) {
-            std::cerr << "[HARMONY Warning] rank " << rank_ << ": field '" << spec.name << "' needs "
-                      << detail::format_bytes(total_bytes) << " but the largest buffer of " << ld.name << " is "
-                      << detail::format_bytes(static_cast<std::size_t>(ld.max_buffer))
-                      << "; the allocation may fail (reduce the mesh)" << std::endl;
+            std::cerr << "[HARMONY] warning: rank " << rank_ << ": field '" << spec.name << "' ("
+                      << detail::format_bytes(total_bytes) << ") exceeds the largest buffer of " << ld.name << " ("
+                      << detail::format_bytes(static_cast<std::size_t>(ld.max_buffer)) << ")" << std::endl;
         }
         cl_int err = CL_SUCCESS;
         rf.replicas[d] = clCreateBuffer(ld.context, flags, total_bytes, nullptr, &err);
@@ -64,20 +64,20 @@ void Runtime::Impl::write_initial_field_data(FieldHandle h, const void* host_ptr
     detail::RegisteredField& rf = field_or_throw(h, "write_initial_field_data()");
     const std::size_t total_bytes = rf.total_bytes();
 
-    std::vector<cl_event> write_events;
+    // Blocking writes in chunks, one device at a time. A single non-blocking
+    // write of the whole field lets the driver keep a staging copy of all of
+    // it in host memory (pageable memory), which doubles the host RAM needed
+    // during set-up and can exceed the memory a batch job was given.
+    constexpr std::size_t chunk_bytes = std::size_t{64} << 20;  // 64 MiB
+    const char* src = static_cast<const char*>(host_ptr);
     for (std::size_t d = 0; d < local_devices_.size(); ++d) {
-        cl_event ev = nullptr;
-        detail::check_cl(
-            clEnqueueWriteBuffer(local_devices_[d].transfer_queue, rf.replicas[d], CL_FALSE,
-                                 0, total_bytes, host_ptr, 0, nullptr, &ev),
-            "clEnqueueWriteBuffer(write_initial_field_data)");
-        write_events.push_back(ev);
-    }
-
-    for (cl_event ev : write_events) {
-        if (ev == nullptr) continue;
-        detail::check_cl(clWaitForEvents(1, &ev), "clWaitForEvents(write_initial_field_data)");
-        clReleaseEvent(ev);
+        for (std::size_t off = 0; off < total_bytes; off += chunk_bytes) {
+            const std::size_t n = std::min(chunk_bytes, total_bytes - off);
+            detail::check_cl(
+                clEnqueueWriteBuffer(local_devices_[d].transfer_queue, rf.replicas[d], CL_TRUE,
+                                     off, n, src + off, 0, nullptr, nullptr),
+                "clEnqueueWriteBuffer(write_initial_field_data)");
+        }
     }
 }
 

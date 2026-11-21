@@ -58,6 +58,7 @@ void append_unique(std::vector<cl_event>& out, const std::vector<cl_event>& even
 
 void Runtime::Impl::execute(const ExecutionStep& step) {
     if (step.invocations.empty()) return;
+    if (!run_header_printed_) print_run_header(step);
     PhaseTimer timer(*this, Phase::launch);
 
     std::vector<ResolvedArgs> fields;
@@ -258,31 +259,84 @@ void Runtime::Impl::run_border_phase(detail::RegisteredKernel& rk, const KernelI
     }
 }
 
+// Work-group size for launches without LaunchGeometry::local_size.
+//
+// Without a local size, an OpenCL 1.x driver must pick one that divides the
+// number of work-items exactly, so a range of awkward size (e.g. 2 x a prime)
+// would run in work-groups of 1 or 2 items. The runtime instead chooses the
+// size once per kernel and device: the largest multiple of the preferred
+// multiple up to 256 and to the kernel's limit.
+std::size_t Runtime::Impl::default_group_size(const KernelInvocation& ki, std::size_t d, cl_kernel kernel) {
+    detail::RegisteredKernel& rk = kernels_.at(ki.binding.kernel.value);
+    if (rk.group_size_per_local_device.size() != local_devices_.size()) {
+        rk.group_size_per_local_device.assign(local_devices_.size(), 0);
+    }
+    std::size_t& size = rk.group_size_per_local_device[d];
+    if (size != 0) return size;
+
+    std::size_t max_size = 0;
+    std::size_t multiple = 0;
+    const cl_device_id dev = local_devices_[d].device;
+    if (clGetKernelWorkGroupInfo(kernel, dev, CL_KERNEL_WORK_GROUP_SIZE, sizeof(max_size), &max_size, nullptr) !=
+            CL_SUCCESS || max_size == 0) {
+        max_size = 1;
+    }
+    if (clGetKernelWorkGroupInfo(kernel, dev, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE, sizeof(multiple),
+                                 &multiple, nullptr) != CL_SUCCESS || multiple == 0) {
+        multiple = 1;
+    }
+    const std::size_t limit = std::min<std::size_t>(256, max_size);
+    size = (limit >= multiple) ? (limit / multiple) * multiple : limit;
+    if (size == 0) size = 1;
+    return size;
+}
+
 void Runtime::Impl::enqueue_range(std::size_t d, cl_kernel kernel, const KernelInvocation& ki,
                                   const ResolvedArgs& fields, std::size_t queue_slot, LaunchPart part,
                                   std::size_t offset, std::size_t count) {
     if (count == 0) return;
 
     const std::vector<cl_event> deps = field_dependencies_for_binding(fields, d, part);
-
-    const std::size_t gwo = offset + ki.geometry.global_offset;
-    const std::size_t gws = count;
-    std::size_t lws_value = ki.geometry.local_size.value_or(0);
-    const std::size_t* lws = ki.geometry.local_size ? &lws_value : nullptr;
-
     const std::vector<cl_command_queue>& queues = local_devices_[d].kernel_queues;
     cl_command_queue queue = queues[queue_slot % queues.size()];
+    const char* what = part == LaunchPart::full       ? "clEnqueueNDRangeKernel(full)"
+                       : part == LaunchPart::interior ? "clEnqueueNDRangeKernel(interior)"
+                                                      : "clEnqueueNDRangeKernel(border)";
 
-    cl_event ev = nullptr;
-    detail::check_cl(clEnqueueNDRangeKernel(queue, kernel, 1, &gwo, &gws, lws, static_cast<cl_uint>(deps.size()),
-                                            deps.empty() ? nullptr : deps.data(), &ev),
-                     part == LaunchPart::full       ? "clEnqueueNDRangeKernel(full)"
-                     : part == LaunchPart::interior ? "clEnqueueNDRangeKernel(interior)"
-                                                    : "clEnqueueNDRangeKernel(border)");
+    // The events are recorded only after every launch: recording releases
+    // the previous writers/readers, which `deps` still refers to.
+    cl_event events[2] = {nullptr, nullptr};
+    int launched = 0;
+    auto launch = [&](std::size_t first, std::size_t items, const std::size_t* lws) {
+        const std::size_t gwo = first + ki.geometry.global_offset;
+        detail::check_cl(clEnqueueNDRangeKernel(queue, kernel, 1, &gwo, &items, lws,
+                                                static_cast<cl_uint>(deps.size()),
+                                                deps.empty() ? nullptr : deps.data(), &events[launched]),
+                         what);
+        ++launched;
+    };
 
-    record_field_events(fields, d, part, ev);
-    append_balance_window_kernel_events(d, ev);
-    clReleaseEvent(ev);
+    if (ki.geometry.local_size) {
+        const std::size_t lws = *ki.geometry.local_size;  // the application's choice
+        launch(offset, count, &lws);
+    } else {
+        // Whole work-groups, then the remainder as a single smaller group.
+        // Partition cuts are aligned to 256 elements whenever the granularity
+        // allows it (Runtime::Impl::cut_unit), so the remainder is usually
+        // empty except in the last partition and in halo borders.
+        const std::size_t group = default_group_size(ki, d, kernel);
+        const std::size_t bulk = (count / group) * group;
+        const std::size_t rest = count - bulk;
+        if (bulk > 0) launch(offset, bulk, &group);
+        if (rest > 0) launch(offset + bulk, rest, &rest);
+    }
+
+    // Both launches are on the same in-order queue: the last one finishes last.
+    for (int k = 0; k < launched; ++k) {
+        record_field_events(fields, d, part, events[k]);
+        append_balance_window_kernel_events(d, events[k]);
+        clReleaseEvent(events[k]);
+    }
 }
 
 // Events a launch must wait for. The interior never touches the ghost
@@ -358,11 +412,7 @@ void Runtime::Impl::maybe_balance_after_step(const ExecutionStep& step) {
     const std::size_t warmup = static_cast<std::size_t>(std::max(0, policy.warmup));
     const std::size_t it = iteration_counter_;
 
-    if (!balance_policy_announced_) {
-        balance_policy_announced_ = true;
-        balance_policy_ = policy;
-        print_balance_policy(policy);
-    }
+    if (!balance_policy_) balance_policy_ = policy;
 
     const bool is_threshold = policy.mode == BalanceMode::dynamic_threshold ||
                               policy.mode == BalanceMode::static_threshold;
@@ -382,7 +432,7 @@ void Runtime::Impl::maybe_balance_after_step(const ExecutionStep& step) {
     const std::vector<FieldHandle> fields = unique_existing_proportional_fields(requested);
 
     PhaseTimer timer(*this, Phase::balance);
-    const double t0 = MPI_Wtime();
+    const double decision0 = decision_seconds_now();
 
     BalanceRecord record;
     record.iteration = it;
@@ -399,7 +449,7 @@ void Runtime::Impl::maybe_balance_after_step(const ExecutionStep& step) {
     }
 
     for (const DevicePartition& p : partitions_) record.elements_after.push_back(p.element_count);
-    record.decision_seconds = MPI_Wtime() - t0 - record.migration_seconds;
+    record.decision_seconds = decision_seconds_now() - decision0;
     print_balance_interval_metrics(std::move(record));
 }
 

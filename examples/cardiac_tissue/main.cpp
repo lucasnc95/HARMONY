@@ -73,7 +73,6 @@ struct Options {
     std::string profiling_file = "profiling_results.txt";
     harmony::HaloSync halo_sync = harmony::HaloSync::overlap;
     harmony::DeviceKind device = harmony::DeviceKind::all;
-    double progress_seconds = 60.0;  // progress line at least this often (wall time)
     std::string kernel_file = KERNEL_FILE;
     std::string kernel_dir = KERNEL_DIR;
     std::string timing_file;
@@ -104,7 +103,6 @@ const char* usage =
     "  --profiling-file           migration profile for 'profiled'\n"
     "  --halo-sync                overlap | local | global (overlap)\n"
     "  --device                   all | gpu | cpu: OpenCL devices to use (all)\n"
-    "  --progress                 seconds between progress lines (60)\n"
     "  --timing-file              appends the wall time\n"
     "  --check                    1 = compare with a CPU run (small tissues only)\n"
     "  --verbose                  0 = do not log each balancing attempt (1)\n";
@@ -145,8 +143,7 @@ Options parse_options(int argc, char** argv) {
             else if (v == "gpu") o.device = harmony::DeviceKind::gpu;
             else if (v == "cpu") o.device = harmony::DeviceKind::cpu;
             else throw std::invalid_argument("--device must be all, gpu or cpu");
-        } else if (key == "--progress") o.progress_seconds = std::stod(v);
-        else if (key == "--halo-sync") {
+        } else if (key == "--halo-sync") {
             if (v == "overlap") o.halo_sync = harmony::HaloSync::overlap;
             else if (v == "local") o.halo_sync = harmony::HaloSync::local;
             else if (v == "global") o.halo_sync = harmony::HaloSync::global;
@@ -175,17 +172,6 @@ Options parse_options(int argc, char** argv) {
         throw std::invalid_argument(msg.str());
     }
     return o;
-}
-
-const char* balance_name(harmony::BalanceMode m) {
-    switch (m) {
-        case harmony::BalanceMode::off: return "off";
-        case harmony::BalanceMode::static_threshold: return "static / threshold";
-        case harmony::BalanceMode::dynamic_threshold: return "dynamic / threshold";
-        case harmony::BalanceMode::static_profiled: return "static / profiled";
-        case harmony::BalanceMode::dynamic_profiled: return "dynamic / profiled";
-    }
-    return "?";
 }
 
 // ---------------------------------------------------------------------------
@@ -262,10 +248,24 @@ struct Reference {
 };
 
 // ---------------------------------------------------------------------------
-// Summaries printed by rank 0
+// Results
 // ---------------------------------------------------------------------------
 
-void print_wave_summary(const Options& o, const std::vector<double>& activation) {
+std::string general(double value) {
+    std::ostringstream out;
+    out << std::setprecision(3) << value;
+    return out.str();
+}
+
+std::string fixed(double value, int decimals) {
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(decimals) << value;
+    return out.str();
+}
+
+// Fraction of activated cells and conduction velocity along z (between the
+// planes at 1/4 and 3/4 of the tissue, through its center).
+void add_wave_results(harmony::Runtime& runtime, const Options& o, const std::vector<double>& activation) {
     const std::size_t plane = static_cast<std::size_t>(o.nx) * o.ny;
     const std::size_t center = static_cast<std::size_t>(o.nx / 2) + static_cast<std::size_t>(o.nx) * (o.ny / 2);
     const int z1 = o.nz / 4, z2 = (3 * o.nz) / 4;
@@ -273,40 +273,10 @@ void print_wave_summary(const Options& o, const std::vector<double>& activation)
 
     std::size_t activated = 0;
     for (double a : activation) activated += (a >= 0) ? 1 : 0;
-
-    std::printf("\nWave\n  activated cells: %.1f %%\n", 100.0 * activated / activation.size());
-    if (t1 >= 0 && t2 > t1) {
-        const double cv = (z2 - z1) * o.dx / (t2 - t1) * 10.0;  // cm/ms -> m/s
-        std::printf("  conduction velocity along z: %.2f m/s (planes %d -> %d activated at %.2f and %.2f ms)\n",
-                    cv, z1, z2, t1, t2);
-    } else {
-        std::printf("  the wave did not cross the tissue yet (increase --time)\n");
-    }
-}
-
-// Average substeps per cell and per time step, in bands of z planes: shows
-// where the work was (the stimulated end and the path of the wave).
-void print_work_profile(const Options& o, const std::vector<double>& work, std::size_t steps) {
-    const std::size_t plane = static_cast<std::size_t>(o.nx) * o.ny;
-    const int bands = std::min(8, o.nz);
-    std::printf("\nCell-model work along z (substeps per cell per time step)\n");
-    std::printf("  %-14s %10s\n", "z planes", "substeps");
-    std::vector<double> avg(bands);
-    double lo = 1e300, hi = 0;
-    for (int b = 0; b < bands; ++b) {
-        const int z0 = b * o.nz / bands, z1 = (b + 1) * o.nz / bands;
-        double sum = 0;
-        for (std::size_t g = plane * z0; g < plane * z1; ++g) sum += work[g];
-        avg[b] = sum / (plane * (z1 - z0)) / static_cast<double>(std::max<std::size_t>(steps, 1));
-        lo = std::min(lo, avg[b]);
-        hi = std::max(hi, avg[b]);
-    }
-    for (int b = 0; b < bands; ++b) {
-        const int z0 = b * o.nz / bands, z1 = (b + 1) * o.nz / bands;
-        const std::size_t bar = static_cast<std::size_t>(std::lround(40.0 * avg[b] / std::max(hi, 1e-12)));
-        std::printf("  %4d - %-7d %10.2f  %s\n", z0, z1 - 1, avg[b], std::string(bar, '#').c_str());
-    }
-    std::printf("  heaviest / lightest band: %.2fx\n", hi / std::max(lo, 1e-12));
+    runtime.add_result("Activated cells", fixed(100.0 * activated / activation.size(), 1) + " %");
+    runtime.add_result("Conduction velocity",
+                       (t1 >= 0 && t2 > t1) ? fixed((z2 - z1) * o.dx / (t2 - t1) * 10.0, 3) + " m/s"
+                                            : std::string("not measured (the wave did not reach z = 3/4)"));
 }
 
 } // namespace
@@ -325,26 +295,20 @@ int main(int argc, char** argv) {
         const std::size_t cells = plane * o.nz;
         const std::size_t steps = static_cast<std::size_t>(std::llround(o.time / o.dt));
 
-        if (runtime.rank() == 0) {
-            std::printf("HARMONY - cardiac tissue, ToR-ORd-like cell model, 2 kernels per step\n");
-            std::printf("  Tissue      : %d x %d x %d cells (%.2f x %.2f x %.2f cm), %zu cells\n", o.nx, o.ny, o.nz,
-                        o.nx * o.dx, o.ny * o.dx, o.nz * o.dx, cells);
-            // Every device holds a full-size replica of each field.
-            const double mib = cells * (TORORD_NSTATES + 4) * real_bytes / (1024.0 * 1024.0);
-            std::printf("  State       : %d variables + V per cell, %s precision (%.1f %s per device)\n",
-                        TORORD_NSTATES, dp ? "double" : "single", mib < 1.0 ? mib * 1024.0 : mib,
-                        mib < 1.0 ? "KiB" : "MiB");
-            std::printf("  Time        : %.1f ms in %zu steps of %.3f ms, stimulus every %.0f ms\n", o.time, steps,
-                        o.dt, o.bcl);
-            std::printf("  Cell model  : dv_max %.3g mV, ca_tol %.3g, substeps %d..%d\n", o.dv_max, o.ca_tol,
-                        o.min_substeps, o.max_substeps);
-            std::printf("  Balancing   : %s", balance_name(o.balance));
-            if (o.balance != harmony::BalanceMode::off) {
-                std::printf(", warm-up probe at step %d, interval %d steps", o.balance_warmup, o.rebalance_interval);
-            }
-            std::printf("\n\n");
-        }
-        runtime.print_devices();
+        runtime.set_run_info({"cardiac_tissue",
+                              {{"Tissue", std::to_string(o.nx) + " x " + std::to_string(o.ny) + " x " +
+                                              std::to_string(o.nz) + " cells"},
+                               {"Cell size", fixed(o.dx * 1.0e4, 0) + " um"},
+                               {"Time step", fixed(o.dt, 3) + " ms"},
+                               {"Simulated time", fixed(o.time, 2) + " ms (" + std::to_string(steps) + " steps)"},
+                               {"Precision", dp ? "double" : "float"},
+                               {"Cell model", "ToR-ORd-like, " + std::to_string(TORORD_NSTATES) + " state variables"},
+                               {"Substeps", std::to_string(o.min_substeps) + " to " + std::to_string(o.max_substeps) +
+                                                " (dv_max " + general(o.dv_max) + " mV, ca_tol " +
+                                                general(o.ca_tol) + ")"},
+                               {"Stimulus", std::to_string(o.stim_planes) + " planes at z = 0, every " +
+                                                fixed(o.bcl, 0) + " ms"}}});
+
 
         // One z plane per partition unit; the diffusion halo is one plane.
         runtime.set_partition({cells, 1, real_bytes, plane});
@@ -429,32 +393,9 @@ int main(int argc, char** argv) {
         };
 
         // ---- Time loop -------------------------------------------------------
-        if (runtime.rank() == 0) std::printf("\nRunning %zu steps...\n", steps);
         runtime.start_timing();
-        const double wall0 = MPI_Wtime();
-        double last_print = wall0;
-        for (std::size_t k = 0; k < steps; ++k) {
-            runtime.execute(make_step(k * o.dt));
-
-            // Every 10 % of the steps and at least every --progress seconds.
-            if (runtime.rank() != 0) continue;
-            const double now = MPI_Wtime();
-            const bool tenth = steps >= 10 && (k + 1) % (steps / 10) == 0;
-            if (tenth || now - last_print >= o.progress_seconds) {
-                const double done = static_cast<double>(k + 1) / steps;
-                std::printf("  t = %8.2f ms  (%5.1f %%)  wall %9.1f s  estimated total %9.1f s\n",
-                            (k + 1) * o.dt, 100.0 * done, now - wall0, (now - wall0) / done);
-                std::fflush(stdout);
-                last_print = now;
-            }
-        }
+        for (std::size_t k = 0; k < steps; ++k) runtime.execute(make_step(k * o.dt));
         const double elapsed = runtime.stop_timing();
-
-        if (runtime.rank() == 0) std::printf("\n");
-        runtime.print_partitions("Final partitions (planes follow the wave)");
-        if (runtime.rank() == 0) std::printf("\n");
-        runtime.print_timing_report();
-        if (!o.report_csv.empty()) runtime.write_timing_report(o.report_csv);
 
         // ---- Results ---------------------------------------------------------
         std::vector<unsigned char> buf(cells * real_bytes);
@@ -462,16 +403,10 @@ int main(int argc, char** argv) {
         const std::vector<double> act = from_device(buf, dp);
         runtime.gather(vm, buf.data(), buf.size());
         const std::vector<double> v_final = from_device(buf, dp);
-        std::vector<float> work_f(cells);
-        runtime.gather(work, work_f.data(), cells * sizeof(float));
-
         int status = 0;
         if (runtime.rank() == 0) {
-            print_wave_summary(o, act);
-            print_work_profile(o, std::vector<double>(work_f.begin(), work_f.end()), steps);
-
+            add_wave_results(runtime, o, act);
             if (o.check) {
-                std::printf("\nChecking against a sequential CPU run (double precision)...\n");
                 Reference ref(o);
                 for (std::size_t k = 0; k < steps; ++k) ref.step(k * o.dt);
                 double dv = 0, dact = 0;
@@ -484,17 +419,17 @@ int main(int argc, char** argv) {
                 const double act_tol = dp ? 1e-6 : 5 * o.dt;
                 const double v_tol = dp ? 1e-3 : 5.0;
                 status = (dact <= act_tol && dv <= v_tol) ? 0 : 1;
-                std::printf("  max |activation time difference| = %.4g ms (tolerance %.3g)\n", dact, act_tol);
-                std::printf("  max |final V difference|         = %.4g mV (tolerance %.3g)\n", dv, v_tol);
-                std::printf("  %s\n", status == 0 ? "[OK]" : "[FAILED]");
+                runtime.add_result("Verification", std::string(status == 0 ? "passed" : "FAILED") +
+                                                       " (sequential CPU reference: max |dV| " + general(dv) +
+                                                       " mV, max |d activation| " + general(dact) + " ms)");
             }
-
             if (!o.timing_file.empty()) {
                 std::ofstream out(o.timing_file, std::ios::app);
                 out << std::fixed << std::setprecision(9) << elapsed << "\n";
             }
-            std::printf("\nExecution time: %.3f s\n", elapsed);
         }
+        runtime.print_timing_report();
+        if (!o.report_csv.empty()) runtime.write_timing_report(o.report_csv);
         MPI_Bcast(&status, 1, MPI_INT, 0, runtime.communicator());
         return status;
     } catch (const std::exception& e) {

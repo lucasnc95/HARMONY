@@ -46,7 +46,7 @@ int Runtime::Impl::local_index_of_global_device(int g) const {
     return -1;
 }
 
-// Splits the domain evenly, rounding the cuts down to the granularity.
+// Splits the domain evenly (same cut rules as any other division).
 void Runtime::Impl::rebuild_partitions_equal_like_wrapper() {
     partitions_.clear();
     if (!partition_.has_value()) return;
@@ -55,29 +55,21 @@ void Runtime::Impl::rebuild_partitions_equal_like_wrapper() {
     for (int c : all_device_counts_) total_devices += c;
     if (total_devices <= 0) return;
 
+    partitions_ = partitions_from_loads(detail::equal_cumulative_loads(static_cast<std::size_t>(total_devices)));
+}
+
+// Elements between two possible cuts. Cuts are always multiples of the
+// granularity; when the granularity divides kLaunchAlignment they are also
+// multiples of kLaunchAlignment, so every partition but the last is a whole
+// number of work-groups (see Runtime::Impl::enqueue_range).
+std::size_t Runtime::Impl::cut_unit(std::size_t parts) const {
+    constexpr std::size_t kLaunchAlignment = 256;
     const std::size_t n = partition_->global_elements;
     const std::size_t gran = std::max<std::size_t>(1, partition_->granularity);
-    const std::size_t devices = static_cast<std::size_t>(total_devices);
-
-    std::vector<std::size_t> cuts(devices + 1, 0);
-    const std::size_t base = n / devices;
-    const std::size_t rem = n % devices;
-    std::size_t acc = 0;
-    for (std::size_t g = 0; g < devices; ++g) {
-        acc += base + (g < rem ? 1u : 0u);
-        cuts[g + 1] = (g + 1 == devices) ? n : (acc / gran) * gran;
+    if (gran < kLaunchAlignment && kLaunchAlignment % gran == 0 && n / kLaunchAlignment >= parts) {
+        return kLaunchAlignment;
     }
-
-    for (int g = 0; g < total_devices; ++g) {
-        const std::size_t gi = static_cast<std::size_t>(g);
-        DevicePartition dp;
-        dp.device_global_index = g;
-        dp.owning_rank = owner_rank_of_global_device(g);
-        dp.local_index = local_index_of_global_device(g);
-        dp.global_offset = cuts[gi];
-        dp.element_count = cuts[gi + 1] - cuts[gi];
-        partitions_.push_back(dp);
-    }
+    return gran;
 }
 
 std::vector<DevicePartition> Runtime::Impl::partitions_from_loads(const std::vector<float>& loads) const {
@@ -99,40 +91,28 @@ std::vector<DevicePartition> Runtime::Impl::partitions_from_loads(const std::vec
 
     const std::size_t parts = cumulative.size();
     std::vector<std::size_t> cuts(parts + 1, 0);
+    const std::size_t unit = cut_unit(parts);
+    const std::size_t total_units = n / unit;
 
-    if ((n % gran) == 0 && (n / gran) >= parts) {
-        // Work in granularity units and keep at least one unit per partition.
-        const std::size_t total_units = n / gran;
-        std::vector<std::size_t> unit_cuts(parts + 1, 0);
-
+    if (total_units >= parts) {
+        // Cuts in whole units, at least one unit per partition; the last
+        // partition also takes the elements after the last whole unit.
         for (std::size_t i = 0; i + 1 < parts; ++i) {
             const double raw = static_cast<double>(cumulative[i]) * static_cast<double>(total_units);
-            std::size_t cut = static_cast<std::size_t>(std::llround(raw));
-
-            const std::size_t min_cut = unit_cuts[i] + 1;
+            const std::size_t min_cut = cuts[i] / unit + 1;
             const std::size_t max_cut = total_units - (parts - (i + 1));
-            cut = std::clamp(cut, min_cut, max_cut);
-            unit_cuts[i + 1] = cut;
-        }
-        unit_cuts.back() = total_units;
-
-        for (std::size_t i = 0; i < unit_cuts.size(); ++i) {
-            cuts[i] = unit_cuts[i] * gran;
+            cuts[i + 1] = std::clamp<std::size_t>(static_cast<std::size_t>(std::llround(raw)), min_cut, max_cut) * unit;
         }
     } else {
-        // Fallback: element cuts rounded down to the granularity (may be empty).
-        for (std::size_t i = 0; i < parts; ++i) {
-            if (i + 1 == parts) {
-                cuts[i + 1] = n;
-            } else {
-                const double raw = static_cast<double>(cumulative[i]) * static_cast<double>(n);
-                std::size_t cut = static_cast<std::size_t>(std::llround(raw));
-                cut = (cut / gran) * gran;
-                cuts[i + 1] = std::clamp(cut, cuts[i], n);
-            }
+        // Fewer units than devices: cuts rounded down to the granularity (some
+        // partitions are empty).
+        for (std::size_t i = 0; i + 1 < parts; ++i) {
+            const double raw = static_cast<double>(cumulative[i]) * static_cast<double>(n);
+            const std::size_t cut = (static_cast<std::size_t>(std::llround(raw)) / gran) * gran;
+            cuts[i + 1] = std::clamp(cut, cuts[i], n);
         }
-        cuts.back() = n;
     }
+    cuts.back() = n;
 
     for (std::size_t g = 0; g < parts; ++g) {
         DevicePartition dp;

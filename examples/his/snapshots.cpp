@@ -170,9 +170,12 @@ int run(const Options& opt, harmony::Runtime& runtime) {
     // ---- Snapshots -----------------------------------------------------------
     if (runtime.rank() == 0) {
         std::filesystem::create_directories(opt.output);
-        std::printf("Writing %d snapshots of a %d x %d x %d mesh to %s/ (one every %d iterations)\n",
-                    opt.iterations / opt.every + 1, opt.x, opt.y, opt.z, opt.output.c_str(), opt.every);
     }
+    runtime.set_run_info({"his_snapshots",
+                          {{"Mesh", std::to_string(opt.x) + " x " + std::to_string(opt.y) + " x " +
+                                        std::to_string(opt.z) + " points"},
+                           {"Iterations", std::to_string(opt.iterations)},
+                           {"Snapshots", "every " + std::to_string(opt.every) + " iterations in " + opt.output}}});
 
     int index = 0;
     // gather() is collective: every rank calls it, rank 0 writes the file.
@@ -206,8 +209,6 @@ int run(const Options& opt, harmony::Runtime& runtime) {
             out.add("device", device);
             out.add("rank", rank);
             out.close();
-            std::printf("  wrote %s/%s  (iteration %d)\n", opt.output.c_str(), name, iteration);
-            std::fflush(stdout);
         }
         ++index;
     };
@@ -218,10 +219,6 @@ int run(const Options& opt, harmony::Runtime& runtime) {
         if ((it + 1) % opt.every == 0 || it + 1 == opt.iterations) snapshot(it + 1);
     }
     runtime.synchronize(true);
-    if (runtime.rank() == 0) {
-        std::printf("Done. In ParaView, open %s/his_..vtk (the series) and color by A_antigen or device.\n",
-                    opt.output.c_str());
-    }
     return 0;
 }
 
@@ -232,7 +229,6 @@ int main(int argc, char** argv) {
         auto runtime = harmony::Runtime::create(argc, argv);
         const Options opt = parse_options(argc, argv);
         runtime.discover_devices({opt.device, 0});
-        runtime.print_devices();
         return opt.use_double ? run<double>(opt, runtime) : run<float>(opt, runtime);
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << std::endl;

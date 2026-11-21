@@ -1,46 +1,28 @@
 #!/bin/bash
 #----------------------------------------------------------------------------
-# Paper tests, scenario n2: compute-0-2 + compute-3-6, GPU + CPU on each: the same 5 configurations.
-# Nodes: compute-0-2 (32 cores, 1 GPU, 28 GB), compute-3-6 (24 cores, 1 GPU, 20 GB)
-# (RAM asked explicitly with mem=; without it PBS reserves only 6 GB.)
+# HARMONY paper tests, scenario n2: compute-0-2 and compute-3-4, GPU and CPU on each.
 #
-# Submit from the HARMONY root. By default every benchmark (his ocean lu
-# map cardiac) in double precision, 10 runs per configuration:
+# Nodes:
+#   compute-0-2  32 cores, 1 GPU, 28 GB
+#   compute-3-4  16 cores, 1 GPU, 7 GB (free memory of the node)
 #
+# Submit from the HARMONY directory:
 #   qsub scripts/pbs/paper_n2.pbs
-#   qsub -v BENCHES=map scripts/pbs/paper_n2.pbs              # one benchmark per job (shorter)
-#   qsub -v BENCHES=lu,RUNS=1,OUT_DIR=results/pilot scripts/pbs/paper_n2.pbs   # pilot
-#   qsub -l walltime=48:00:00 scripts/pbs/paper_n2.pbs   # only if the queue imposes a limit
+#   qsub -v BENCHES=map scripts/pbs/paper_n2.pbs
+#   qsub -v BENCHES=lu,RUNS=1,OUT_DIR=results/pilot scripts/pbs/paper_n2.pbs
 #
-# Variables (qsub -v): BENCHES ("his ocean lu map cardiac"), PRECISIONS
-# (double; "float double" for both), RUNS (10), RUNS_OFF, CONFIGS, WARMUP,
-# INTERVAL, LENGTH, THRESHOLD (0.01), CPU_HOST_CORES (1), HALO_SYNC,
-# GPU_PIN, OUT_DIR (results/paper). See paper_run.sh and paper_cases.sh.
-# Statistics: scripts/pbs/paper_stats.sh results/paper
+# Variables: see scripts/pbs/paper_run.sh. Statistics: scripts/pbs/paper_stats.sh
 #----------------------------------------------------------------------------
 #PBS -N HARMONY_n2
 #PBS -j oe
-#PBS -l select=1:host=compute-0-2:ncpus=32:ngpus=1:mem=28gb:mpiprocs=1+1:host=compute-3-6:ncpus=24:ngpus=1:mem=20gb:mpiprocs=1
+#PBS -l select=1:host=compute-0-2:ncpus=32:ngpus=1:mem=28gb:mpiprocs=1+1:host=compute-3-4:ncpus=16:ngpus=1:mem=7gb:mpiprocs=1
 #PBS -l place=scatter
 
 set -euo pipefail
 # shellcheck disable=SC1091
 source "${HARMONY_ROOT:-${PBS_O_WORKDIR:-$(pwd)}}/scripts/pbs/job_env.sh"
-# shellcheck disable=SC1091
-source "${PAPER_CASES_FILE:-$HARMONY_ROOT/scripts/pbs/paper_cases.sh}"
 
 SCENARIO=n2
-GPU_PIN=${GPU_PIN:-}
-BENCHES=${BENCHES:-"his ocean lu map cardiac"}
-BENCHES=${BENCHES//:/ }
-PRECISIONS=${PRECISIONS:-double}
-PRECISIONS=${PRECISIONS//:/ }
-
 # shellcheck disable=SC1091
 source "$HARMONY_ROOT/scripts/pbs/paper_run.sh"
-
-for bench in $BENCHES; do
-    for precision in $PRECISIONS; do
-        paper_run "$bench" "$precision"
-    done
-done
+paper_main

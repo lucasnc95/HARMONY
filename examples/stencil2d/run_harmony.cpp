@@ -5,7 +5,11 @@
 
 #include <harmony/runtime.hpp>
 
+#include <algorithm>
+#include <cmath>
+#include <iomanip>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 
 namespace stencil2d {
@@ -42,11 +46,40 @@ harmony::HaloSync halo_sync(const Options& o) {
     return harmony::HaloSync::overlap;
 }
 
+std::string general(double value) {
+    std::ostringstream out;
+    out << std::setprecision(3) << value;
+    return out.str();
+}
+
+std::string fixed(double value, int decimals) {
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(decimals) << value;
+    return out.str();
+}
+
+void set_run_info(const Options& o, harmony::Runtime& runtime) {
+    std::vector<std::pair<std::string, std::string>> p;
+    p.emplace_back("Kernel", kernel_entry_point(o.kernel));
+    if (o.is_stencil()) {
+        p.emplace_back("Grid", std::to_string(o.nx) + " x " + std::to_string(o.ny));
+    } else {
+        p.emplace_back("Elements", std::to_string(o.n));
+    }
+    p.emplace_back("Precision", o.is_double() ? "double" : "float");
+    if (o.kernel != Kernel::ocean) {
+        p.emplace_back("Flops per element", std::to_string(4L * o.flop_repeat * o.chains) + " (" +
+                                                std::to_string(o.flop_repeat) + " x " + std::to_string(o.chains) +
+                                                " chains)");
+    }
+    p.emplace_back("Iterations", std::to_string(o.iterations));
+    runtime.set_run_info({std::string("stencil2d ") + kernel_name(o.kernel), p});
+}
+
 template <typename T>
-RunResult run_typed(const Options& o, harmony::Runtime& runtime) {
+RunResult run_typed(const Options& o, harmony::Runtime& runtime, const RunResult* baseline) {
     const std::size_t total = o.elements();
     std::vector<T> init = initial_data<T>(o);
-    std::vector<T> zeros(o.is_stencil() ? 0 : total, T(0));  // only the map needs it
 
     // Stencils are split in whole rows (granularity nx) and need one row of halo.
     const std::size_t row = o.is_stencil() ? static_cast<std::size_t>(o.nx) : 1;
@@ -56,11 +89,11 @@ RunResult run_typed(const Options& o, harmony::Runtime& runtime) {
     auto f_a = runtime.create_field({"a", total, 1, sizeof(T), harmony::BufferUsage::read_write, init.data(),
                                      harmony::RedistributionDependency::proportional});
     auto f_b = runtime.create_field({"b", total, 1, sizeof(T), harmony::BufferUsage::read_write,
-                                     o.is_stencil() ? init.data() : zeros.data(),
+                                     // the map overwrites all of b in its first step: no initial data
+                                     o.is_stencil() ? init.data() : nullptr,
                                      harmony::RedistributionDependency::proportional});
     // The devices have their copies: free the host ones (GBs for big grids).
     std::vector<T>().swap(init);
-    std::vector<T>().swap(zeros);
 
     // All kernels have the signature (in, out, ...scalars). The stencils read
     // the rows above and below: a halo exchange of one row on `in`; the map has none.
@@ -102,11 +135,6 @@ RunResult run_typed(const Options& o, harmony::Runtime& runtime) {
         runtime.execute((it % 2 == 0) ? step_ab : step_ba);
     }
     const double seconds = runtime.stop_timing();
-    if (o.report) {
-        runtime.print_partitions("Final partitions");
-        runtime.print_timing_report();
-    }
-    if (!o.report_csv.empty()) runtime.write_timing_report(o.report_csv);
 
     RunResult result;
     result.seconds = seconds;
@@ -117,16 +145,30 @@ RunResult run_typed(const Options& o, harmony::Runtime& runtime) {
         runtime.gather(result_in_a ? f_a : f_b, output.empty() ? nullptr : output.data(), output.size() * sizeof(T));
         result.output.assign(output.begin(), output.end());
     }
+
+    if (baseline != nullptr && runtime.rank() == 0) {
+        double max_diff = 0.0;
+        for (std::size_t i = 0; i < result.output.size() && i < baseline->output.size(); ++i) {
+            max_diff = std::max(max_diff, std::fabs(result.output[i] - baseline->output[i]));
+        }
+        result.status = (max_diff == 0.0 && result.output.size() == baseline->output.size()) ? 0 : 1;
+        runtime.add_result("MPI+OpenCL wall time", fixed(baseline->seconds, 3) + " s");
+        runtime.add_result("Verification", std::string(result.status == 0 ? "passed" : "FAILED") +
+                                               " (max |HARMONY - MPI+OpenCL| = " + general(max_diff) + ")");
+    }
+    runtime.print_timing_report();
+    if (!o.report_csv.empty()) runtime.write_timing_report(o.report_csv);
     return result;
 }
 
 } // namespace
 
-RunResult run_harmony(const Options& o, int argc, char** argv) {
+RunResult run_harmony(const Options& o, int argc, char** argv, const RunResult* baseline) {
     auto runtime = harmony::Runtime::create(argc, argv);
     runtime.discover_devices({to_harmony(o.device), 0, 4, o.cpu_host_cores});
-    runtime.print_devices();
-    return o.is_double() ? run_typed<double>(o, runtime) : run_typed<float>(o, runtime);
+    runtime.set_verbose(o.verbose);
+    set_run_info(o, runtime);
+    return o.is_double() ? run_typed<double>(o, runtime, baseline) : run_typed<float>(o, runtime, baseline);
 }
 
 } // namespace stencil2d

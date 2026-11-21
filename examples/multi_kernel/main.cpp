@@ -24,6 +24,7 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -84,7 +85,8 @@ int main(int argc, char** argv) {
 
         runtime.discover_devices({harmony::DeviceKind::all, 0, /*kernel_queues=*/4});
         runtime.set_verbose(opt.verbose);
-        runtime.print_devices();
+        runtime.set_run_info({"multi_kernel",
+                              {{"Elements", std::to_string(opt.n)}, {"Iterations", std::to_string(opt.iterations)}}});
 
         const std::size_t n = static_cast<std::size_t>(opt.n);
         runtime.set_partition({n, 1, sizeof(float), 1});
@@ -149,7 +151,6 @@ int main(int argc, char** argv) {
             runtime.execute((it % 2 == 0) ? u_to_v : v_to_u);
         }
         runtime.stop_timing();
-        runtime.print_timing_report();
 
         std::vector<float> result(n), result_e(n);
         runtime.gather((opt.iterations % 2 == 0) ? u : v, result.data(), n * sizeof(float));
@@ -167,9 +168,12 @@ int main(int argc, char** argv) {
                 err_e = std::max(err_e, static_cast<double>(std::fabs(result_e[i] - ref_e[i])));
             }
             status = (err <= 1.0e-5 && err_e <= 1.0e-5) ? 0 : 1;
-            std::cout << "max |device - cpu|: u = " << err << ", e = " << err_e
-                      << (status == 0 ? "  [OK]\n" : "  [FAILED]\n");
+            std::ostringstream text;
+            text << (status == 0 ? "passed" : "FAILED") << " (max |device - CPU|: u " << err << ", e " << err_e
+                 << ")";
+            runtime.add_result("Verification", text.str());
         }
+        runtime.print_timing_report();
         MPI_Bcast(&status, 1, MPI_INT, 0, runtime.communicator());
         return status;
     } catch (const std::exception& ex) {

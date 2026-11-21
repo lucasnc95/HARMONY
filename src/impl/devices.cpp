@@ -4,6 +4,7 @@
 #include "detail/format.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <exception>
 #include <iostream>
@@ -115,7 +116,7 @@ void Runtime::Impl::clear_runtime_state() {
     iteration_counter_ = 0;
     balance_window_start_iteration_ = 0;
     static_balance_attempted_ = false;
-    balance_policy_announced_ = false;
+    run_header_printed_ = false;
     balance_policy_.reset();
 }
 
@@ -159,7 +160,7 @@ cl_device_id reserve_host_cores(cl_device_id dev, int reserve, detail::PlatformC
     cl_uint created = 0;
     const cl_int err = clCreateSubDevices(dev, props, 1, &sub, &created);
     if (err != CL_SUCCESS || created != 1 || sub == nullptr) {
-        std::cerr << "[HARMONY Warning] the OpenCL driver cannot split the CPU device (error " << err
+        std::cerr << "[HARMONY] warning: the OpenCL driver cannot split the CPU device (error " << err
                   << "); using all its compute units\n";
         return dev;
     }
@@ -340,12 +341,18 @@ struct DeviceRecord {
     std::uint64_t global_memory;
     std::uint64_t max_buffer;
     char name[128];
+    char host[64];
 };
 
 } // namespace
 
 // Every rank learns the devices of every other rank (used by the tables).
 void Runtime::Impl::gather_global_device_info() {
+    char host[MPI_MAX_PROCESSOR_NAME] = {};
+    int host_len = 0;
+    MPI_Get_processor_name(host, &host_len);
+    for (DeviceInfo& d : devices_) d.host = host;
+
     std::vector<DeviceRecord> local(devices_.size());
     for (std::size_t i = 0; i < devices_.size(); ++i) {
         DeviceRecord& r = local[i];
@@ -358,6 +365,7 @@ void Runtime::Impl::gather_global_device_info() {
         r.global_memory = devices_[i].global_memory;
         r.max_buffer = devices_[i].max_buffer;
         std::strncpy(r.name, devices_[i].name.c_str(), sizeof(r.name) - 1);
+        std::snprintf(r.host, sizeof(r.host), "%s", host);
     }
 
     std::vector<int> counts(size_), displs(size_);
@@ -379,6 +387,7 @@ void Runtime::Impl::gather_global_device_info() {
         info.local_index = r.local_index;
         info.global_index = r.global_index;
         info.name = r.name;
+        info.host = r.host;
         info.kind = static_cast<DeviceKind>(r.kind);
         info.compute_units = r.compute_units;
         info.global_memory = r.global_memory;
@@ -389,17 +398,9 @@ void Runtime::Impl::gather_global_device_info() {
 
 void Runtime::Impl::print_devices(std::ostream& os) const {
     if (rank_ != 0) return;
-    detail::Table table({{"Dev", false}, {"Rank", false}, {"Type", false}, {"Compute units", true},
-                         {"Memory", true}, {"Largest buffer", true}, {"Name", false}});
-    for (const DeviceInfo& d : global_devices_) {
-        table.add_row({std::to_string(d.global_index), std::to_string(d.rank), detail::device_kind_name(d.kind),
-                       std::to_string(d.compute_units), detail::format_bytes(d.global_memory),
-                       detail::format_bytes(d.max_buffer), d.name});
-    }
     std::ostringstream out;
-    out << "Devices: " << global_devices_.size() << " on " << size_
-        << (size_ == 1 ? " MPI process" : " MPI processes") << "\n";
-    table.print(out, "  ");
+    out << "Devices\n";
+    device_table(false).print(out, "  ");
     os << out.str() << std::flush;
 }
 

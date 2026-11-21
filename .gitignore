@@ -1,4 +1,19 @@
-job_dcl.out
+# Build output (./build.sh and examples/*/build.sh)
+build/
+lib/
+bin/
+examples/*/bin/
+
+# Benchmark output and cluster artifacts
+results/
+Results/
+machines*
+profiling_results*.txt
+*.e[0-9]*
+*.o[0-9]*
 gmon.out
-gabarito.out
-teste_250.out
+
+# Editors
+.vscode/
+.idea/
+*.swp

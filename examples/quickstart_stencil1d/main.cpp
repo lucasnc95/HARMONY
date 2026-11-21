@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -80,7 +81,8 @@ int main(int argc, char** argv) {
 
         runtime.discover_devices({harmony::DeviceKind::all, 0});
         runtime.set_verbose(opt.verbose);
-        runtime.print_devices();
+        runtime.set_run_info({"quickstart_stencil1d",
+                              {{"Elements", std::to_string(opt.n)}, {"Iterations", std::to_string(opt.iterations)}}});
 
         // 2. Split the domain (n elements of one float) among all devices.
         const std::size_t total = static_cast<std::size_t>(opt.n);
@@ -134,7 +136,6 @@ int main(int argc, char** argv) {
             runtime.execute((it % 2 == 0) ? a_to_b : b_to_a);
         }
         runtime.stop_timing();
-        runtime.print_timing_report();
 
         std::vector<float> result(total);
         runtime.gather((opt.iterations % 2 == 0) ? a : b, result.data(), result.size() * sizeof(float));
@@ -147,8 +148,11 @@ int main(int argc, char** argv) {
                 max_error = std::max(max_error, static_cast<double>(std::fabs(result[i] - expected[i])));
             }
             status = (max_error <= 1.0e-4) ? 0 : 1;
-            std::cout << "max |device - cpu| = " << max_error << (status == 0 ? "  [OK]\n" : "  [FAILED]\n");
+            std::ostringstream text;
+            text << (status == 0 ? "passed" : "FAILED") << " (max |device - CPU| = " << max_error << ")";
+            runtime.add_result("Verification", text.str());
         }
+        runtime.print_timing_report();
         MPI_Bcast(&status, 1, MPI_INT, 0, runtime.communicator());
         return status;
     } catch (const std::exception& e) {

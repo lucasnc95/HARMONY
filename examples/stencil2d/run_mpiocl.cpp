@@ -140,8 +140,12 @@ struct Partition {
     std::size_t count = 0;
 };
 
-// Equal split over all devices of all ranks; global device order is rank by rank.
-std::vector<Partition> equal_partitions(std::size_t total, int local_devices, int rank, MPI_Comm comm) {
+// Equal split over all devices of all ranks; global device order is rank by
+// rank. Cuts are multiples of `granularity` (whole rows for the stencils: the
+// 9-point stencil reads diagonal neighbours, which a cut inside a row would
+// leave outside the one-row halo), as in HARMONY.
+std::vector<Partition> equal_partitions(std::size_t total, int local_devices, int rank, MPI_Comm comm,
+                                        std::size_t granularity) {
     int size = 1;
     MPI_Comm_size(comm, &size);
     std::vector<int> counts(size, 0);
@@ -154,13 +158,16 @@ std::vector<Partition> equal_partitions(std::size_t total, int local_devices, in
         }
     }
 
+    const std::size_t gran = std::max<std::size_t>(1, granularity);
     const std::size_t base = total / parts.size();
     const std::size_t rem = total % parts.size();
-    std::size_t cur = 0;
+    std::size_t acc = 0, cur = 0;
     for (std::size_t g = 0; g < parts.size(); ++g) {
+        acc += base + (g < rem ? 1 : 0);
+        const std::size_t end = (g + 1 == parts.size()) ? total : (acc / gran) * gran;
         parts[g].offset = cur;
-        parts[g].count = base + (g < rem ? 1 : 0);
-        cur += parts[g].count;
+        parts[g].count = end - cur;
+        cur = end;
     }
     return parts;
 }
@@ -277,8 +284,9 @@ RunResult run_typed(const Options& o) {
     discover(devs, o.device, read_file(o.kernel_file), kernel_entry_point(o.kernel), o.build_options());
 
     const std::size_t total = o.elements();
-    const std::vector<Partition> parts = equal_partitions(total, static_cast<int>(devs.list.size()), rank, comm);
     const std::size_t halo = o.is_stencil() ? static_cast<std::size_t>(o.nx) : 0;
+    const std::vector<Partition> parts =
+        equal_partitions(total, static_cast<int>(devs.list.size()), rank, comm, halo > 0 ? halo : 1);
     const bool use_halo = halo > 0 && parts.size() > 1;
 
     // Every device holds a full-size copy; it only updates its own slice.

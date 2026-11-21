@@ -1,69 +1,55 @@
 #!/usr/bin/env bash
-# Benchmarks of the paper: problem size, run length and balancing schedule
-# of each benchmark in each precision. Sourced by paper_job.pbs.
+# Benchmark cases of the paper: problem size, run length and executable.
+# Sourced by paper_run.sh.
 #
-# SIZES. Every device keeps the WHOLE domain of each field in ONE OpenCL
-# buffer (HARMONY replicates the fields and updates only its partition), so
-# a field must fit in the largest buffer of the smallest device. On NVIDIA
-# that is 1/4 of the memory: ~2.9 GiB on the RTX A2000 12 GB. Every field
-# below is <= 2.75 GiB (the device table of each run shows "Largest buffer";
-# HARMONY warns if a field does not fit):
+# Sizes. The partitioned axis (z; rows for ocean and lu) is the longest one.
+# Every device keeps the whole domain of each field, and a CPU device keeps it
+# in host RAM, so the sizes are limited by the node with the least free
+# memory (compute-3-4, about 7 GB): about 2.5 GiB of data per device, which
+# gives a peak of about 4 GiB per MPI process (data of the CPU device plus
+# one field of initial data) plus the GPU driver.
 #
-#   benchmark  precision  domain                      fields          per device
-#   his        float      128 x 128 x 5376 points     2 x 2.63 GiB    5.3 GiB
-#   his        double     128 x 128 x 2688 points     2 x 2.63 GiB    5.3 GiB
-#   ocean, lu  float      26624 x 26624               2 x 2.64 GiB    5.3 GiB
-#   ocean, lu  double     18944 x 18944               2 x 2.67 GiB    5.3 GiB
-#   map        float      700,000,000 elements        2 x 2.61 GiB    5.2 GiB
-#   map        double     350,000,000 elements        2 x 2.61 GiB    5.2 GiB
-#   cardiac    float      256 x 256 x 280 cells       state 2.73 GiB  3.0 GiB
-#   cardiac    double     256 x 256 x 140 cells       state 2.73 GiB  3.0 GiB
+#   benchmark  precision  domain                    data per device
+#   his        float      128 x 128 x 2560 points   2.5 GiB
+#   his        double     128 x 128 x 1280 points   2.5 GiB
+#   ocean, lu  float      8192 x 40960 (nx x ny)    2.5 GiB
+#   ocean, lu  double     8192 x 20480 (nx x ny)    2.5 GiB
+#   map        float      335,544,320 elements      2.5 GiB
+#   map        double     167,772,160 elements      2.5 GiB
+#   cardiac    float      128 x 128 x 768 cells     2.1 GiB
+#   cardiac    double     128 x 128 x 384 cells     2.0 GiB
 #
-# The kernels also index with int (<= 2^31 values per field), which these
-# sizes respect. A node with a GPU and a CPU device needs the per-device
-# memory twice (GPU + host RAM) while the fields are created: <= ~11 GB,
-# inside the RAM asked for every node.
+# Cardiac discretization: dx = 0.02 cm, dt = 0.05 ms
+# (D * dt / dx^2 = 0.0012 * 0.05 / 0.02^2 = 0.15 <= 1/6).
 #
-# CARDIAC DISCRETIZATION. dx = 0.02 cm (200 um): the float tissue is
-# 5.12 x 5.12 x 5.60 cm (a ventricular block), the double one 5.12 x 5.12 x
-# 2.80 cm. dt = 0.05 ms: the explicit diffusion needs D*dt/dx^2 <= 1/6
-# (here 0.0012 * 0.05 / 0.02^2 = 0.15); the cell model subdivides dt itself
-# where it is stiff. The wave (~0.5 m/s) starts at z = 0 and travels along
-# z, the partitioned axis.
-#
-# RUN LENGTH. his 10000 iterations; ocean 10000; lu and map 5000 (float) /
-# 1000 (double); cardiac 20 ms (float) / 5 ms (double). LENGTH overrides it.
-#
-# BALANCING. warm-up probe at iteration 10 (adjusts the equal division early;
-# not a balancing attempt); balancing every 10 % of the run: e.g. HIS
-# (10000 iterations) at 1000, 2000, ..., 9000 (static: only at 1000).
-# WARMUP and INTERVAL override them.
+# Run length: his and ocean 10000 iterations; lu and map 5000 (float) and
+# 1000 (double); cardiac 20 ms (float) and 5 ms (double). LENGTH overrides it.
 
 PAPER_BENCHMARKS="his ocean lu map cardiac"
 
 # paper_app <benchmark>: executable
 paper_app() {
     case "$1" in
-        his)            echo "$HARMONY_ROOT/examples/his/bin/his" ;;
-        ocean|lu|map)   echo "$HARMONY_ROOT/examples/stencil2d/bin/stencil2d" ;;
-        cardiac)        echo "$HARMONY_ROOT/examples/cardiac_tissue/bin/cardiac_tissue" ;;
+        his)          echo "$HARMONY_ROOT/examples/his/bin/his" ;;
+        ocean|lu|map) echo "$HARMONY_ROOT/examples/stencil2d/bin/stencil2d" ;;
+        cardiac)      echo "$HARMONY_ROOT/examples/cardiac_tissue/bin/cardiac_tissue" ;;
         *) echo "unknown benchmark '$1'" >&2; return 1 ;;
     esac
 }
 
-# paper_problem <benchmark> <precision>: size and fixed options
+# paper_problem <benchmark> <precision>: problem size and fixed options
 paper_problem() {
     case "$1:$2" in
-        his:float)      echo "--x 128 --y 128 --z 5376 --gather-final 0" ;;
-        his:double)     echo "--x 128 --y 128 --z 2688 --gather-final 0" ;;
-        ocean:float)    echo "--impl harmony --gather 0 --kernel ocean --nx 26624 --ny 26624" ;;
-        ocean:double)   echo "--impl harmony --gather 0 --kernel ocean --nx 18944 --ny 18944" ;;
-        lu:float)       echo "--impl harmony --gather 0 --kernel lu --nx 26624 --ny 26624 --flop-repeat 16 --chains 4" ;;
-        lu:double)      echo "--impl harmony --gather 0 --kernel lu --nx 18944 --ny 18944 --flop-repeat 16 --chains 4" ;;
-        map:float)      echo "--impl harmony --gather 0 --kernel map --n 700000000 --flop-repeat 16 --chains 4" ;;
-        map:double)     echo "--impl harmony --gather 0 --kernel map --n 350000000 --flop-repeat 16 --chains 4" ;;
-        cardiac:float)  echo "--nx 256 --ny 256 --nz 280 --dx 0.02 --dt 0.05 --progress 300" ;;
-        cardiac:double) echo "--nx 256 --ny 256 --nz 140 --dx 0.02 --dt 0.05 --progress 300" ;;
+        his:float)      echo "--x 128 --y 128 --z 2560 --gather-final 0" ;;
+        his:double)     echo "--x 128 --y 128 --z 1280 --gather-final 0" ;;
+        ocean:float)    echo "--impl harmony --gather 0 --kernel ocean --nx 8192 --ny 40960" ;;
+        ocean:double)   echo "--impl harmony --gather 0 --kernel ocean --nx 8192 --ny 20480" ;;
+        lu:float)       echo "--impl harmony --gather 0 --kernel lu --nx 8192 --ny 40960 --flop-repeat 16 --chains 4" ;;
+        lu:double)      echo "--impl harmony --gather 0 --kernel lu --nx 8192 --ny 20480 --flop-repeat 16 --chains 4" ;;
+        map:float)      echo "--impl harmony --gather 0 --kernel map --n 335544320 --flop-repeat 16 --chains 4" ;;
+        map:double)     echo "--impl harmony --gather 0 --kernel map --n 167772160 --flop-repeat 16 --chains 4" ;;
+        cardiac:float)  echo "--nx 128 --ny 128 --nz 768 --dx 0.02 --dt 0.05" ;;
+        cardiac:double) echo "--nx 128 --ny 128 --nz 384 --dx 0.02 --dt 0.05" ;;
         *) echo "unknown case '$1:$2'" >&2; return 1 ;;
     esac
 }
@@ -71,12 +57,11 @@ paper_problem() {
 # paper_length <benchmark> <precision>: iterations (cardiac: simulated ms)
 paper_length() {
     case "$1:$2" in
-        his:*)          echo 10000 ;;
-        ocean:*)        echo 10000 ;;
+        his:*|ocean:*)        echo 10000 ;;
         lu:float|map:float)   echo 5000 ;;
         lu:double|map:double) echo 1000 ;;
-        cardiac:float)  echo 20 ;;   # 400 steps of 0.05 ms
-        cardiac:double) echo 5 ;;    # 100 steps
+        cardiac:float)        echo 20 ;;
+        cardiac:double)       echo 5 ;;
         *) echo "unknown case '$1:$2'" >&2; return 1 ;;
     esac
 }
@@ -90,7 +75,7 @@ paper_length_option() {
     esac
 }
 
-# paper_iterations <benchmark> <length>: number of HARMONY iterations (steps)
+# paper_iterations <benchmark> <length>: number of iterations (time steps)
 paper_iterations() {
     case "$1" in
         cardiac) awk -v t="$2" 'BEGIN { printf "%d", t / 0.05 + 0.5 }' ;;
