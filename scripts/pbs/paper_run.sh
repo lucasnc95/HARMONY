@@ -28,7 +28,6 @@
 #   LENGTH       iterations, or ms for cardiac (paper_cases.sh)
 #   CPU_HOST_CORES  cores of each CPU device left to the MPI process (1)
 #   HALO_SYNC    overlap | local | global (overlap)
-#   GPU_PIN      GPUs per host, e.g. compute-1-0=0 (set by paper_n3.pbs)
 #   OUT_DIR      results directory       (results/paper)
 #   MONITOR      1 = record GPU state and node load during each run (1)
 #
@@ -60,7 +59,6 @@ WARMUP=${WARMUP:-10}
 THRESHOLD=${THRESHOLD:-0.01}
 CPU_HOST_CORES=${CPU_HOST_CORES:-1}
 HALO_SYNC=${HALO_SYNC:-overlap}
-GPU_PIN=${GPU_PIN:-}
 OUT_DIR=${OUT_DIR:-results/paper}
 MONITOR=${MONITOR:-1}
 WRAPPER="$HARMONY_ROOT/scripts/pbs/rank_wrapper.sh"
@@ -84,7 +82,7 @@ paper_config_args() {
 # paper_prepare: GPU check of every rank and migration profile of the scenario.
 paper_prepare() {
     echo "GPU check:"
-    if ! run_mpi "$WRAPPER" --gpu-pin "$GPU_PIN" --check-gpus -- true < /dev/null; then
+    if ! run_mpi "$WRAPPER" --check-gpus -- true < /dev/null; then
         echo "error: GPU check failed; no test was run" >&2
         exit 3
     fi
@@ -92,7 +90,7 @@ paper_prepare() {
     mkdir -p "$OUT_DIR/profiles"
     if [ ! -s "$PROFILE" ]; then
         echo "Migration profile: $PROFILE"
-        run_mpi "$WRAPPER" --gpu-pin "$GPU_PIN" -- "$HARMONY_ROOT/bin/migration_profiler" "$PROFILE" \
+        run_mpi "$WRAPPER" -- "$HARMONY_ROOT/bin/migration_profiler" "$PROFILE" \
             < /dev/null > "$OUT_DIR/profiles/${SCENARIO}.log" 2>&1 \
             || echo "warning: migration profiler failed (see $OUT_DIR/profiles/${SCENARIO}.log)" >&2
     fi
@@ -129,10 +127,10 @@ paper_run() {
         echo "  $config"
         for run in $(seq 1 "$RUNS"); do
             local monitor_args=()
-            [ "$MONITOR" = "1" ] && monitor_args=(--monitor "$dir/monitor_run${run}")
+            [ "$MONITOR" = "1" ] && monitor_args=("--monitor=$dir/monitor_run${run}")
             # < /dev/null: the launcher would otherwise read this script's input.
             # shellcheck disable=SC2086
-            if run_mpi "$WRAPPER" --gpu-pin "$GPU_PIN" ${monitor_args[@]+"${monitor_args[@]}"} -- \
+            if run_mpi "$WRAPPER" ${monitor_args[@]+"${monitor_args[@]}"} -- \
                 "$app" $problem $length_option --precision "$precision" $args --halo-sync "$HALO_SYNC" \
                 --profiling-file "$PROFILE" --timing-file "$dir/timings.txt" \
                 --report-csv "$dir/report_run${run}.csv" \

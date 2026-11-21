@@ -1,10 +1,10 @@
 #!/bin/bash
 #----------------------------------------------------------------------------
-# HARMONY paper tests, scenario n2: compute-0-2 and compute-3-4, GPU and CPU on each.
+# HARMONY paper tests, scenario n2: compute-0-2 and compute-3-6, GPU and CPU on each.
 #
 # Nodes:
 #   compute-0-2  32 cores, 1 GPU, 28 GB
-#   compute-3-4  16 cores, 1 GPU, 7 GB (free memory of the node)
+#   compute-3-6  24 cores, 1 GPU, 6 GB (free memory of the node: 6.5 GB)
 #
 # Submit from the HARMONY directory:
 #   qsub scripts/pbs/paper_n2.pbs
@@ -15,7 +15,7 @@
 #----------------------------------------------------------------------------
 #PBS -N HARMONY_n2
 #PBS -j oe
-#PBS -l select=1:host=compute-0-2:ncpus=32:ngpus=1:mem=28gb:mpiprocs=1+1:host=compute-3-4:ncpus=16:ngpus=1:mem=7gb:mpiprocs=1
+#PBS -l select=1:host=compute-0-2:ncpus=32:ngpus=1:mem=28gb:mpiprocs=1+1:host=compute-3-6:ncpus=24:ngpus=1:mem=6gb:mpiprocs=1
 #PBS -l place=scatter
 
 set -euo pipefail

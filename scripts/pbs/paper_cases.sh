@@ -5,7 +5,7 @@
 # Sizes. The partitioned axis (z; rows for ocean and lu) is the longest one.
 # Every device keeps the whole domain of each field, and a CPU device keeps it
 # in host RAM, so the sizes are limited by the node with the least free
-# memory (compute-3-4, about 7 GB): about 2.5 GiB of data per device, which
+# memory (compute-3-6, about 6.5 GB): about 2.5 GiB of data per device, which
 # gives a peak of about 4 GiB per MPI process (data of the CPU device plus
 # one field of initial data) plus the GPU driver.
 #

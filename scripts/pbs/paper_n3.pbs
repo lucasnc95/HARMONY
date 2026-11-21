@@ -1,10 +1,10 @@
 #!/bin/bash
 #----------------------------------------------------------------------------
-# HARMONY paper tests, scenario n3: compute-0-2, compute-3-4 and compute-1-0, GPU and CPU on each.
+# HARMONY paper tests, scenario n3: compute-0-2, compute-3-6 and compute-1-0, GPU and CPU on each.
 #
 # Nodes:
 #   compute-0-2  32 cores, 1 GPU, 28 GB
-#   compute-3-4  16 cores, 1 GPU, 7 GB (free memory of the node)
+#   compute-3-6  24 cores, 1 GPU, 6 GB (free memory of the node: 6.5 GB)
 #   compute-1-0  128 cores (64 on vnode 0, 64 on vnode 1), the A100 of vnode 0, 64 GB
 #
 # compute-1-0 is requested as two chunks on the same host (place=free), with
@@ -21,12 +21,11 @@
 #----------------------------------------------------------------------------
 #PBS -N HARMONY_n3
 #PBS -j oe
-#PBS -l select=1:host=compute-0-2:ncpus=32:ngpus=1:mem=28gb:mpiprocs=1+1:host=compute-3-4:ncpus=16:ngpus=1:mem=7gb:mpiprocs=1+1:vnode=compute-1-0[0]:ncpus=64:ngpus=1:mem=32gb:mpiprocs=1+1:vnode=compute-1-0[1]:ncpus=64:mem=32gb:mpiprocs=0
+#PBS -l select=1:host=compute-0-2:ncpus=32:ngpus=1:mem=28gb:mpiprocs=1+1:host=compute-3-6:ncpus=24:ngpus=1:mem=6gb:mpiprocs=1+1:vnode=compute-1-0[0]:ncpus=64:ngpus=1:mem=32gb:mpiprocs=1+1:vnode=compute-1-0[1]:ncpus=64:mem=32gb:mpiprocs=0
 #PBS -l place=free
 
 set -euo pipefail
 export ONE_RANK_PER_NODE=${ONE_RANK_PER_NODE:-1}
-export GPU_PIN=${GPU_PIN:-compute-1-0=0}
 # shellcheck disable=SC1091
 source "${HARMONY_ROOT:-${PBS_O_WORKDIR:-$(pwd)}}/scripts/pbs/job_env.sh"
 
